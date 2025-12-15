@@ -5,6 +5,20 @@ All notable changes to TermIDE will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2025-12-15
+
+### Fixed
+- Git status color flickering on directory reload (preserve cache during refresh)
+- `.git` directory date not updating on commit when viewing repo root
+- Single mouse click copying character to clipboard in terminal (now only drag selection copies)
+- File manager git status update timing and CPU format display in menu bar
+
+### Changed
+- Unified git and filesystem watchers into single `UnifiedWatcher` with separate debounce intervals (300ms files, 1000ms git)
+
+### Performance
+- Optimized rendering and reduced memory allocations
+
 ## [0.5.2] - 2025-12-14
 
 ### Fixed
@@ -378,6 +392,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks for code quality
 - Comprehensive test suite
 
+[0.5.3]: https://github.com/termide/termide/releases/tag/0.5.3
+[0.5.2]: https://github.com/termide/termide/releases/tag/0.5.2
 [0.5.1]: https://github.com/termide/termide/releases/tag/0.5.1
 [0.5.0]: https://github.com/termide/termide/releases/tag/0.5.0
 [0.4.0]: https://github.com/termide/termide/releases/tag/0.4.0
