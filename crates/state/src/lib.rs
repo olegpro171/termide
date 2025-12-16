@@ -156,7 +156,8 @@ impl RenamePattern {
         created: Option<SystemTime>,
         modified: Option<SystemTime>,
     ) -> String {
-        let parts = Self::split_filename(original_name);
+        // Collect parts without allocating Strings - just &str slices
+        let parts: Vec<&str> = original_name.split('.').collect();
         let mut result = self.template.clone();
 
         // Replace $0 (full name)
@@ -165,7 +166,7 @@ impl RenamePattern {
         // Replace $1-9 (parts from left)
         for i in 1..=9 {
             let placeholder = format!("${}", i);
-            let value = parts.get(i - 1).map(|s| s.as_str()).unwrap_or("");
+            let value = parts.get(i - 1).copied().unwrap_or("");
             result = result.replace(&placeholder, value);
         }
 
@@ -173,7 +174,7 @@ impl RenamePattern {
         for i in 1..=9 {
             let placeholder = format!("$-{}", i);
             let idx = parts.len().saturating_sub(i);
-            let value = parts.get(idx).map(|s| s.as_str()).unwrap_or("");
+            let value = parts.get(idx).copied().unwrap_or("");
             result = result.replace(&placeholder, value);
         }
 
@@ -195,11 +196,6 @@ impl RenamePattern {
         }
 
         result
-    }
-
-    /// Split filename into parts by dots
-    fn split_filename(filename: &str) -> Vec<String> {
-        filename.split('.').map(|s| s.to_string()).collect()
     }
 
     /// Format time to YYYYMMDD_HHMMSS string
