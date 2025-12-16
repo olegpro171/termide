@@ -169,13 +169,14 @@ impl Modal for SessionsModal {
             };
 
             let path_style = if is_selected {
-                // Selected item (including current session)
                 Style::default()
                     .fg(theme.fg)
                     .bg(theme.accented_fg)
                     .add_modifier(Modifier::BOLD)
+            } else if is_current {
+                // Current session - same color as panel border and selected files
+                Style::default().fg(theme.accented_fg)
             } else {
-                // Normal item
                 Style::default().fg(theme.bg)
             };
 
