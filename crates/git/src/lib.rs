@@ -327,6 +327,7 @@ pub struct GitRepoStatus {
 }
 
 /// Get git repository status for a specific file or directory.
+/// Optimized to use minimal git process spawns (2 instead of 6).
 pub fn get_repo_status(repo_path: &Path, item_path: &Path) -> Option<GitRepoStatus> {
     if !is_available() {
         return None;
@@ -338,9 +339,7 @@ pub fn get_repo_status(repo_path: &Path, item_path: &Path) -> Option<GitRepoStat
         item_path
     };
 
-    // Check if inside git work tree
-    git_command(git_work_dir, &["rev-parse", "--is-inside-work-tree"])?;
-
+    // Single call to get repo root (also validates we're in a git repo)
     let repo_root_str = git_command_stdout(git_work_dir, &["rev-parse", "--show-toplevel"])?;
     let repo_root = PathBuf::from(repo_root_str.trim());
 
@@ -352,30 +351,26 @@ pub fn get_repo_status(repo_path: &Path, item_path: &Path) -> Option<GitRepoStat
         relative_path.to_string_lossy().to_string()
     };
 
-    // Repo root cannot be ignored within itself; for other paths check git status
-    let is_ignored = if is_repo_root {
-        false
-    } else {
-        git_command_stdout(
-            &repo_root,
-            &["status", "--porcelain", "--ignored", "--", &git_path_str],
-        )
-        .map(|stdout| stdout.lines().any(|line| line.starts_with("!! ")))
-        .unwrap_or(false)
-    };
+    // Single git status call with branch info and ignored files
+    // Output format:
+    //   ## branch...origin/branch [ahead N, behind M]
+    //   !! ignored/file
+    //    M modified/file
+    let status_output = git_command_stdout(
+        &repo_root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-b",
+            "--ignored",
+            "--",
+            &git_path_str,
+        ],
+    )
+    .unwrap_or_default();
 
-    let uncommitted_changes =
-        git_command_stdout(&repo_root, &["status", "--porcelain", "--", &git_path_str])
-            .map(|stdout| stdout.lines().filter(|l| !l.starts_with("!!")).count())
-            .unwrap_or(0);
-
-    let ahead = git_command_stdout(&repo_root, &["rev-list", "--count", "@{upstream}..HEAD"])
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-
-    let behind = git_command_stdout(&repo_root, &["rev-list", "--count", "HEAD..@{upstream}"])
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
+    let (ahead, behind, uncommitted_changes, is_ignored) =
+        parse_git_status_output(&status_output, is_repo_root);
 
     Some(GitRepoStatus {
         uncommitted_changes,
@@ -383,6 +378,52 @@ pub fn get_repo_status(repo_path: &Path, item_path: &Path) -> Option<GitRepoStat
         behind,
         is_ignored,
     })
+}
+
+/// Parse git status --porcelain=v1 -b --ignored output.
+/// Returns (ahead, behind, uncommitted_changes, is_ignored).
+fn parse_git_status_output(output: &str, is_repo_root: bool) -> (usize, usize, usize, bool) {
+    let mut ahead = 0;
+    let mut behind = 0;
+    let mut uncommitted_changes = 0;
+    let mut is_ignored = false;
+
+    for line in output.lines() {
+        if line.starts_with("## ") {
+            // Parse branch line: "## main...origin/main [ahead 2, behind 1]"
+            if let Some(bracket_start) = line.find('[') {
+                let tracking_info = &line[bracket_start..];
+                // Parse ahead count
+                if let Some(ahead_pos) = tracking_info.find("ahead ") {
+                    let start = ahead_pos + 6;
+                    let end = tracking_info[start..]
+                        .find(|c: char| !c.is_ascii_digit())
+                        .map(|i| start + i)
+                        .unwrap_or(tracking_info.len());
+                    ahead = tracking_info[start..end].parse().unwrap_or(0);
+                }
+                // Parse behind count
+                if let Some(behind_pos) = tracking_info.find("behind ") {
+                    let start = behind_pos + 7;
+                    let end = tracking_info[start..]
+                        .find(|c: char| !c.is_ascii_digit())
+                        .map(|i| start + i)
+                        .unwrap_or(tracking_info.len());
+                    behind = tracking_info[start..end].parse().unwrap_or(0);
+                }
+            }
+        } else if line.starts_with("!! ") {
+            // Ignored file - only count if not repo root
+            if !is_repo_root {
+                is_ignored = true;
+            }
+        } else if line.len() >= 2 && !line.starts_with("## ") {
+            // Any other status line is an uncommitted change
+            uncommitted_changes += 1;
+        }
+    }
+
+    (ahead, behind, uncommitted_changes, is_ignored)
 }
 
 #[cfg(test)]
@@ -395,5 +436,56 @@ mod tests {
         if let Some(root) = find_repo_root(&current) {
             assert!(root.join(".git").exists());
         }
+    }
+
+    #[test]
+    fn test_parse_git_status_branch_with_tracking() {
+        let output = "## main...origin/main [ahead 2, behind 3]\n M file.rs\n";
+        let (ahead, behind, changes, ignored) = parse_git_status_output(output, false);
+        assert_eq!(ahead, 2);
+        assert_eq!(behind, 3);
+        assert_eq!(changes, 1);
+        assert!(!ignored);
+    }
+
+    #[test]
+    fn test_parse_git_status_ahead_only() {
+        let output = "## feature...origin/feature [ahead 5]\n";
+        let (ahead, behind, changes, _) = parse_git_status_output(output, false);
+        assert_eq!(ahead, 5);
+        assert_eq!(behind, 0);
+        assert_eq!(changes, 0);
+    }
+
+    #[test]
+    fn test_parse_git_status_behind_only() {
+        let output = "## main...origin/main [behind 1]\n";
+        let (ahead, behind, _, _) = parse_git_status_output(output, false);
+        assert_eq!(ahead, 0);
+        assert_eq!(behind, 1);
+    }
+
+    #[test]
+    fn test_parse_git_status_ignored_files() {
+        let output = "## main\n!! ignored.txt\n M changed.rs\n";
+        let (_, _, changes, ignored) = parse_git_status_output(output, false);
+        assert!(ignored);
+        assert_eq!(changes, 1); // Only the M line, not the !! line
+    }
+
+    #[test]
+    fn test_parse_git_status_repo_root_not_ignored() {
+        let output = "## main\n!! some_ignored\n";
+        let (_, _, _, ignored) = parse_git_status_output(output, true);
+        assert!(!ignored); // Repo root cannot be ignored
+    }
+
+    #[test]
+    fn test_parse_git_status_no_tracking() {
+        let output = "## main\n M file.rs\n?? new.txt\n";
+        let (ahead, behind, changes, _) = parse_git_status_output(output, false);
+        assert_eq!(ahead, 0);
+        assert_eq!(behind, 0);
+        assert_eq!(changes, 2); // M and ?? lines
     }
 }
