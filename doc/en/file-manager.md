@@ -37,6 +37,31 @@ The file manager panel provides an intuitive interface for navigating the file s
 | `Ctrl+R`          | Refresh current directory contents         |
 | `Space`           | Show file/directory information            |
 
+## Search
+
+| Shortcut           | Action                                     |
+|-------------------|--------------------------------------------|
+| `Ctrl+F`          | Search files by name (glob patterns)       |
+| `Ctrl+Shift+F`    | Search in file contents (regex)            |
+
+### File Search (Ctrl+F)
+
+Opens a modal for quick file search by name using glob patterns:
+- Type to filter files in real-time
+- Results show relative paths with git status colors
+- Press Enter to open selected file
+- Press Escape or click outside to close
+
+### Content Search (Ctrl+Shift+F)
+
+Opens a modal for searching text within files using regular expressions:
+- Searches only in text files (binary files are skipped)
+- Large files are skipped (configurable limit in settings)
+- Results show file path, line number, and context (3 lines)
+- Matched text is highlighted
+- Press Enter to open file at the matched line
+- Press Escape or click outside to close
+
 ## Clipboard
 
 | Shortcut           | Action                                     |

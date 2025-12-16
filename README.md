@@ -243,6 +243,8 @@ For detailed documentation, see:
 - `Space` - Show file/directory information
 - `Insert` - Toggle file selection
 - `Ctrl+A` - Select all files
+- `Ctrl+F` - Search files by name (glob patterns)
+- `Ctrl+Shift+F` - Search in file contents (regex)
 - `F` - Create new file
 - `D` / `F7` - Create new directory
 - `C` / `F5` - Copy selected files
