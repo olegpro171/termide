@@ -117,7 +117,7 @@ impl<'a> ThemeDropdown<'a> {
                 let item_style = if is_selected {
                     Style::default()
                         .fg(self.app_theme.fg)
-                        .bg(self.app_theme.accented_fg)
+                        .bg(self.app_theme.bg)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(self.app_theme.bg).bg(self.app_theme.fg)

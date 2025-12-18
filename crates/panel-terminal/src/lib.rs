@@ -49,8 +49,8 @@ pub struct Terminal {
     size: PtySize,
     /// Process activity flag
     is_alive: Arc<Mutex<bool>>,
-    /// Terminal title (user@host:dir)
-    terminal_title: String,
+    /// Terminal title prefix (user@host//dir)
+    title_prefix: String,
     /// Initial working directory (set when terminal was created)
     initial_cwd: std::path::PathBuf,
     /// Cached theme for rendering
@@ -194,7 +194,7 @@ impl Terminal {
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
             .unwrap_or_else(|| "~".to_string());
 
-        let terminal_title = format!("{}@{}:{}", username, hostname, current_dir);
+        let title_prefix = format!("{}@{}//{}", username, hostname, current_dir);
 
         Ok(Self {
             pty,
@@ -204,7 +204,7 @@ impl Terminal {
             screen,
             size,
             is_alive,
-            terminal_title,
+            title_prefix,
             initial_cwd: working_dir,
             cached_theme: Theme::default(),
             has_new_data,
@@ -933,6 +933,28 @@ impl Terminal {
     pub fn has_pending_output(&self) -> bool {
         self.has_new_data.swap(false, Ordering::AcqRel)
     }
+
+    /// Get the name of the currently running foreground command
+    fn get_foreground_command(&self) -> String {
+        if let Some(pid) = self.shell_pid {
+            // Read children of shell
+            let children_path = format!("/proc/{}/task/{}/children", pid, pid);
+            if let Ok(children) = std::fs::read_to_string(&children_path) {
+                if let Some(child_pid) = children.split_whitespace().next() {
+                    let comm_path = format!("/proc/{}/comm", child_pid);
+                    if let Ok(comm) = std::fs::read_to_string(&comm_path) {
+                        return comm.trim().to_string();
+                    }
+                }
+            }
+            // No children - return shell name
+            let comm_path = format!("/proc/{}/comm", pid);
+            if let Ok(comm) = std::fs::read_to_string(&comm_path) {
+                return comm.trim().to_string();
+            }
+        }
+        "shell".to_string()
+    }
 }
 
 impl Panel for Terminal {
@@ -941,7 +963,7 @@ impl Panel for Terminal {
     }
 
     fn title(&self) -> String {
-        self.terminal_title.clone()
+        format!("{} ({})", self.title_prefix, self.get_foreground_command())
     }
 
     fn prepare_render(&mut self, theme: &Theme, _config: &Config) {

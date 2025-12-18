@@ -313,6 +313,133 @@ impl App {
         Ok(())
     }
 
+    /// Handle new session modal result - create/switch to session in selected directory
+    pub(super) fn handle_new_session_result(
+        &mut self,
+        value: Box<dyn std::any::Any>,
+    ) -> Result<()> {
+        if let Some(project_path) = value.downcast_ref::<std::path::PathBuf>() {
+            self.create_new_session(project_path.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Create a new session in the specified directory
+    /// If a session already exists, it will be cleared (reset to default panels)
+    fn create_new_session(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
+        use termide_panel_file_manager::FileManager;
+        use termide_session::Session;
+
+        // 1. Save current session before switching
+        self.auto_save_session();
+
+        // 2. Clear any existing session in the target directory
+        if let Ok(session_dir) = Session::get_session_dir(&new_project_root) {
+            // Remove session file if it exists (this clears the session)
+            let session_file = session_dir.join("session.toml");
+            if session_file.exists() {
+                let _ = std::fs::remove_file(&session_file);
+                logger::info(format!(
+                    "Cleared existing session in: {:?}",
+                    new_project_root
+                ));
+            }
+        }
+
+        // 3. Change working directory
+        std::env::set_current_dir(&new_project_root)?;
+        logger::info(format!(
+            "Changed working directory to: {:?}",
+            new_project_root
+        ));
+
+        // 4. Update project_root
+        self.project_root = new_project_root.clone();
+
+        // 5. Create fresh layout with default panels (2 FileManagers)
+        self.layout_manager = termide_layout::LayoutManager::new();
+        let fm1 = FileManager::new_with_path(new_project_root.clone());
+        let fm2 = FileManager::new_with_path(new_project_root);
+        self.add_panel(Box::new(fm1));
+        self.add_panel(Box::new(fm2));
+
+        // 6. Save the new session
+        self.auto_save_session();
+
+        let t = termide_i18n::t();
+        self.state.set_info(t.session_created().to_string());
+
+        Ok(())
+    }
+
+    /// Handle change root path modal result - move session to new directory
+    pub(super) fn handle_change_root_path_result(
+        &mut self,
+        value: Box<dyn std::any::Any>,
+    ) -> Result<()> {
+        if let Some(new_path) = value.downcast_ref::<std::path::PathBuf>() {
+            self.move_session_to(new_path.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Move current session to a new directory
+    fn move_session_to(&mut self, new_project_root: std::path::PathBuf) -> Result<()> {
+        use termide_session::Session;
+
+        let old_project_root = self.project_root.clone();
+
+        // Don't do anything if same directory
+        if old_project_root == new_project_root {
+            return Ok(());
+        }
+
+        // 1. Save current session
+        self.auto_save_session();
+
+        // 2. Copy all session data to new location (including unsaved buffers)
+        if let Ok(old_session_dir) = Session::get_session_dir(&old_project_root) {
+            if let Ok(new_session_dir) = Session::get_session_dir(&new_project_root) {
+                // Create new session directory if needed
+                let _ = std::fs::create_dir_all(&new_session_dir);
+
+                // Copy all files from old session directory
+                if let Ok(entries) = std::fs::read_dir(&old_session_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            if let Some(filename) = path.file_name() {
+                                let new_path = new_session_dir.join(filename);
+                                let _ = std::fs::copy(&path, &new_path);
+                            }
+                        }
+                    }
+                }
+
+                // Remove old session directory
+                let _ = std::fs::remove_dir_all(&old_session_dir);
+            }
+        }
+
+        // 3. Change working directory
+        std::env::set_current_dir(&new_project_root)?;
+        logger::info(format!(
+            "Moved session from {:?} to {:?}",
+            old_project_root, new_project_root
+        ));
+
+        // 4. Update project_root
+        self.project_root = new_project_root;
+
+        // 5. Save session in new location
+        self.auto_save_session();
+
+        let t = termide_i18n::t();
+        self.state.set_info(t.session_moved().to_string());
+
+        Ok(())
+    }
+
     /// Handle file search modal result - navigate to selected file
     pub(super) fn handle_file_search(
         &mut self,

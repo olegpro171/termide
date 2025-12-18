@@ -22,6 +22,7 @@ pub use base::{
 pub mod confirm;
 pub mod conflict;
 pub mod content_search;
+pub mod directory_picker;
 pub mod editable_select;
 pub mod file_search;
 pub mod info;
@@ -36,6 +37,7 @@ pub mod sessions;
 pub use confirm::ConfirmModal;
 pub use conflict::{ConflictModal, ConflictResolution};
 pub use content_search::{ContentSearchModal, ContentSearchResultItem};
+pub use directory_picker::DirectoryPickerModal;
 pub use editable_select::{EditableSelectModal, SelectOption};
 pub use file_search::{FileSearchModal, SearchResultItem};
 pub use info::InfoModal;
@@ -79,6 +81,8 @@ pub enum ActiveModal {
     FileSearch(Box<FileSearchModal>),
     /// Content search modal
     ContentSearch(Box<ContentSearchModal>),
+    /// Directory picker modal
+    DirectoryPicker(Box<DirectoryPickerModal>),
 }
 
 /// Trait for all modal windows.

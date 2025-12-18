@@ -36,7 +36,12 @@ impl App {
             return self.handle_modal_key(key);
         }
 
-        // If submenu is open, handle submenu navigation
+        // If Sessions submenu is open, handle its navigation
+        if self.state.ui.sessions_submenu_open {
+            return self.handle_sessions_submenu_key(key);
+        }
+
+        // If Preferences submenu is open, handle submenu navigation
         if self.state.ui.submenu_open {
             return self.handle_submenu_key(key);
         }
@@ -120,7 +125,9 @@ impl App {
             | PendingAction::NextPanel
             | PendingAction::PrevPanel
             | PendingAction::QuitApplication
-            | PendingAction::SwitchSession => {
+            | PendingAction::SwitchSession
+            | PendingAction::NewSession
+            | PendingAction::ChangeRootPath => {
                 // These actions don't require panel_index update
             }
         }

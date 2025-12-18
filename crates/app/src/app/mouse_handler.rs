@@ -6,7 +6,10 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use super::App;
 use termide_theme::Theme;
-use termide_ui_render::{get_menu_item_x_position, get_preferences_items, PREFERENCES_MENU_INDEX};
+use termide_ui_render::{
+    get_menu_item_x_position, get_preferences_items, get_sessions_items, PREFERENCES_MENU_INDEX,
+    SESSIONS_MENU_INDEX,
+};
 
 impl App {
     /// Handle mouse event
@@ -54,7 +57,15 @@ impl App {
             return Ok(());
         }
 
-        // Handle submenu clicks when submenu is open
+        // Handle Sessions submenu clicks when it's open
+        if self.state.ui.sessions_submenu_open
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && self.handle_sessions_submenu_click(mouse.column, mouse.row)?
+        {
+            return Ok(());
+        }
+
+        // Handle Preferences submenu clicks when submenu is open
         if self.state.ui.submenu_open
             && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             && self.handle_submenu_click(mouse.column, mouse.row)?
@@ -365,6 +376,44 @@ impl App {
         }
 
         // Click outside dropdowns - close all menus
+        self.state.close_menu();
+        Ok(true)
+    }
+
+    /// Handle click on Sessions submenu dropdown
+    /// Returns true if click was handled
+    fn handle_sessions_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
+        // Get Sessions dropdown position
+        let menu_x = get_menu_item_x_position(SESSIONS_MENU_INDEX);
+        let dropdown_y = 1_u16;
+
+        // Calculate Sessions dropdown dimensions
+        let sessions_items = get_sessions_items();
+        let sessions_width = sessions_items
+            .iter()
+            .map(|i| i.label.len())
+            .max()
+            .unwrap_or(10) as u16
+            + 4;
+        let sessions_height = sessions_items.len() as u16 + 2; // +2 for borders
+
+        // Check click on Sessions dropdown
+        if x >= menu_x
+            && x < menu_x + sessions_width
+            && y >= dropdown_y
+            && y < dropdown_y + sessions_height
+        {
+            let item_y = y.saturating_sub(dropdown_y + 1); // -1 for top border
+            let item_index = item_y as usize;
+            if item_index < sessions_items.len() {
+                self.state.ui.selected_sessions_item = item_index;
+                // Execute the action for the selected item
+                self.execute_sessions_submenu_action()?;
+                return Ok(true);
+            }
+        }
+
+        // Click outside dropdown - close menu
         self.state.close_menu();
         Ok(true)
     }

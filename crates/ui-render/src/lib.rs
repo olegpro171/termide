@@ -8,10 +8,12 @@ pub mod panel_rendering;
 pub mod status_bar;
 pub mod theme_dropdown;
 
-pub use dropdown::{get_preferences_items, Dropdown, DropdownItem};
+pub use dropdown::{
+    get_preferences_items, get_sessions_items, Dropdown, DropdownItem, SESSIONS_SUBMENU_ITEM_COUNT,
+};
 pub use menu::{
     get_menu_item_x_position, get_menu_items, render_menu, resource_color, MenuRenderParams,
-    MENU_ITEM_COUNT, PREFERENCES_MENU_INDEX,
+    MENU_ITEM_COUNT, PREFERENCES_MENU_INDEX, SESSIONS_MENU_INDEX,
 };
 pub use panel_rendering::{
     render_collapsed_panel, render_dividers, render_expanded_panel, ExpandedPanelParams,

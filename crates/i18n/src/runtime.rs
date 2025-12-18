@@ -771,6 +771,42 @@ impl Translation for RuntimeTranslation {
         self.get_string("sessions_current")
     }
 
+    fn sessions_new(&self) -> &str {
+        self.get_string("sessions_new")
+    }
+
+    fn sessions_switch(&self) -> &str {
+        self.get_string("sessions_switch")
+    }
+
+    fn sessions_change_root(&self) -> &str {
+        self.get_string("sessions_change_root")
+    }
+
+    fn session_created(&self) -> &str {
+        self.get_string("session_created")
+    }
+
+    fn session_moved(&self) -> &str {
+        self.get_string("session_moved")
+    }
+
+    fn directory_picker_title(&self) -> &str {
+        self.get_string("directory_picker_title")
+    }
+
+    fn directory_picker_create(&self) -> &str {
+        self.get_string("directory_picker_create")
+    }
+
+    fn directory_picker_move(&self) -> &str {
+        self.get_string("directory_picker_move")
+    }
+
+    fn directory_picker_cancel(&self) -> &str {
+        self.get_string("directory_picker_cancel")
+    }
+
     fn time_just_now(&self) -> &str {
         self.get_string("time_just_now")
     }

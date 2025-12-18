@@ -8,6 +8,7 @@
     Alt+E        Open editor panel
     Alt+L        Open Log panel
     Alt+P        Open config file in editor
+    Alt+/        Switch session (select project)
 
 
   PANEL MANAGEMENT

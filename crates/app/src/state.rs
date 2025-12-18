@@ -133,6 +133,7 @@ impl AppState {
         self.ui.selected_menu_item = None;
         self.ui.selected_dropdown_item = 0;
         self.close_submenu();
+        self.close_sessions_submenu();
     }
 
     /// Open submenu (e.g., Preferences dropdown)
@@ -148,6 +149,18 @@ impl AppState {
         self.ui.selected_submenu_item = 0;
         self.ui.nested_submenu_open = false;
         self.ui.selected_nested_item = 0;
+    }
+
+    /// Open Sessions submenu
+    pub fn open_sessions_submenu(&mut self) {
+        self.ui.sessions_submenu_open = true;
+        self.ui.selected_sessions_item = 0;
+    }
+
+    /// Close Sessions submenu
+    pub fn close_sessions_submenu(&mut self) {
+        self.ui.sessions_submenu_open = false;
+        self.ui.selected_sessions_item = 0;
     }
 
     /// Open nested submenu (e.g., Themes list)

@@ -222,6 +222,17 @@ pub trait Translation: Send + Sync {
     // Sessions
     fn sessions_title(&self) -> &str;
     fn sessions_current(&self) -> &str;
+    fn sessions_new(&self) -> &str;
+    fn sessions_switch(&self) -> &str;
+    fn sessions_change_root(&self) -> &str;
+    fn session_created(&self) -> &str;
+    fn session_moved(&self) -> &str;
+
+    // Directory picker
+    fn directory_picker_title(&self) -> &str;
+    fn directory_picker_create(&self) -> &str;
+    fn directory_picker_move(&self) -> &str;
+    fn directory_picker_cancel(&self) -> &str;
 
     // Relative time
     fn time_just_now(&self) -> &str;

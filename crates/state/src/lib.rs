@@ -150,6 +150,10 @@ pub struct UiState {
     pub theme_preview_original: Option<String>,
     /// Divider drag state for panel resize
     pub drag: DragState,
+    /// Is Sessions submenu open
+    pub sessions_submenu_open: bool,
+    /// Selected item in Sessions submenu
+    pub selected_sessions_item: usize,
 }
 
 /// Terminal state (dimensions)
@@ -421,6 +425,10 @@ pub enum PendingAction {
     QuitApplication,
     /// Switch to another session
     SwitchSession,
+    /// Create new session in specified directory
+    NewSession,
+    /// Change root path of current session
+    ChangeRootPath,
     /// File search in file manager
     FileSearch { panel_index: usize },
     /// Content search in file manager

@@ -124,6 +124,8 @@ pub enum HotkeyAction {
     // === Application ===
     /// Request quit (with confirmation if needed)
     RequestQuit,
+    /// Open sessions modal
+    OpenSessions,
 }
 
 impl HotkeyAction {
@@ -168,6 +170,7 @@ impl HotkeyAction {
             // Actions that need special handling (return None)
             HotkeyAction::ToggleMenu
             | HotkeyAction::OpenPreferences
+            | HotkeyAction::OpenSessions
             | HotkeyAction::PrevInGroup
             | HotkeyAction::NextInGroup
             | HotkeyAction::ToggleStacking
@@ -318,11 +321,23 @@ impl DefaultHotkeyProcessor {
             HotkeyAction::NextInGroup,
         );
 
-        // Navigation - comma/period
-        bindings.insert(KeyBinding::alt(KeyCode::Char(',')), HotkeyAction::PrevGroup);
-        bindings.insert(KeyBinding::alt(KeyCode::Char('<')), HotkeyAction::PrevGroup);
-        bindings.insert(KeyBinding::alt(KeyCode::Char('.')), HotkeyAction::NextGroup);
-        bindings.insert(KeyBinding::alt(KeyCode::Char('>')), HotkeyAction::NextGroup);
+        // Sessions switcher (Alt+/ or Alt+. for Cyrillic layout)
+        bindings.insert(
+            KeyBinding::alt(KeyCode::Char('/')),
+            HotkeyAction::OpenSessions,
+        );
+        bindings.insert(
+            KeyBinding::alt(KeyCode::Char('?')),
+            HotkeyAction::OpenSessions,
+        );
+        bindings.insert(
+            KeyBinding::alt(KeyCode::Char('.')),
+            HotkeyAction::OpenSessions,
+        );
+        bindings.insert(
+            KeyBinding::alt(KeyCode::Char('>')),
+            HotkeyAction::OpenSessions,
+        );
 
         // Panel management
         bindings.insert(

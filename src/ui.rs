@@ -14,9 +14,9 @@ use termide_panel_file_manager::FileManager;
 use termide_panel_terminal::Terminal;
 use termide_theme::Theme;
 use termide_ui_render::{
-    get_menu_item_x_position, get_preferences_items, render_collapsed_panel, render_dividers,
-    render_expanded_panel, render_menu, Dropdown, ExpandedPanelParams, MenuRenderParams,
-    ThemeDropdown, PREFERENCES_MENU_INDEX,
+    get_menu_item_x_position, get_preferences_items, get_sessions_items, render_collapsed_panel,
+    render_dividers, render_expanded_panel, render_menu, Dropdown, ExpandedPanelParams,
+    MenuRenderParams, ThemeDropdown, PREFERENCES_MENU_INDEX, SESSIONS_MENU_INDEX,
 };
 
 use termide_modal::Modal;
@@ -26,7 +26,28 @@ use termide_ui_render::{StatusBar, StatusBarParams};
 fn render_dropdowns_and_modals(frame: &mut Frame, state: &mut AppState) {
     let theme = state.theme;
 
-    // Render submenu dropdowns if Preferences menu is selected and submenu is open
+    // Render Sessions submenu if open
+    if state.ui.menu_open
+        && state.ui.selected_menu_item == Some(SESSIONS_MENU_INDEX)
+        && state.ui.sessions_submenu_open
+    {
+        // Calculate position of Sessions menu item
+        let menu_x = get_menu_item_x_position(SESSIONS_MENU_INDEX);
+        let dropdown_y = 1_u16; // Below menu bar
+
+        // Render Sessions submenu
+        let sessions_items = get_sessions_items();
+        let dropdown = Dropdown::new(
+            &sessions_items,
+            state.ui.selected_sessions_item,
+            menu_x,
+            dropdown_y,
+            theme,
+        );
+        dropdown.render(frame.buffer_mut());
+    }
+
+    // Render Preferences submenu if open
     if state.ui.menu_open
         && state.ui.selected_menu_item == Some(PREFERENCES_MENU_INDEX)
         && state.ui.submenu_open
@@ -81,6 +102,7 @@ fn render_dropdowns_and_modals(frame: &mut Frame, state: &mut AppState) {
             ActiveModal::Sessions(m) => m.render(area, frame.buffer_mut(), theme),
             ActiveModal::FileSearch(m) => m.render(area, frame.buffer_mut(), theme),
             ActiveModal::ContentSearch(m) => m.render(area, frame.buffer_mut(), theme),
+            ActiveModal::DirectoryPicker(m) => m.render(area, frame.buffer_mut(), theme),
         }
     }
 }

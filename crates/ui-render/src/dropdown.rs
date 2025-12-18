@@ -161,3 +161,16 @@ pub fn get_preferences_items() -> Vec<DropdownItem> {
         DropdownItem::new(t.preferences_edit(), "edit_preferences"),
     ]
 }
+
+/// Get sessions submenu items
+pub fn get_sessions_items() -> Vec<DropdownItem> {
+    let t = i18n::t();
+    vec![
+        DropdownItem::new(t.sessions_new(), "new_session"),
+        DropdownItem::new(t.sessions_switch(), "switch_session"),
+        DropdownItem::new(t.sessions_change_root(), "change_root"),
+    ]
+}
+
+/// Number of items in Sessions submenu
+pub const SESSIONS_SUBMENU_ITEM_COUNT: usize = 3;

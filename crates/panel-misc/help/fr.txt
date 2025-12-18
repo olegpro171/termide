@@ -8,6 +8,7 @@
     Alt+E        Ouvrir le panneau éditeur
     Alt+L        Ouvrir le panneau journal
     Alt+P        Ouvrir le fichier de configuration dans l'éditeur
+    Alt+/        Changer de session (sélectionner le projet)
 
 
   GESTION DES PANNEAUX

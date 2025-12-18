@@ -8,6 +8,7 @@
     Alt+E        Abrir panel de editor
     Alt+L        Abrir panel de registro
     Alt+P        Abrir archivo de configuración en el editor
+    Alt+/        Cambiar sesión (seleccionar proyecto)
 
 
   GESTIÓN DE PANELES

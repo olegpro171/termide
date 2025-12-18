@@ -65,6 +65,9 @@ impl App {
             HotkeyAction::OpenPreferences => {
                 self.open_config_in_editor()?;
             }
+            HotkeyAction::OpenSessions => {
+                self.handle_open_sessions_modal()?;
+            }
 
             // Navigation
             HotkeyAction::PrevGroup => {

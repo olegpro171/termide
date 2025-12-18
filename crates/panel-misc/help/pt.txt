@@ -8,6 +8,7 @@
     Alt+E        Abrir painel do editor
     Alt+L        Abrir painel de log
     Alt+P        Abrir arquivo de configuração no editor
+    Alt+/        Alternar sessão (selecionar projeto)
 
 
   GERENCIAMENTO DE PAINÉIS

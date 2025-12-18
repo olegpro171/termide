@@ -48,9 +48,8 @@ impl App {
         if let Some(menu_index) = self.state.ui.selected_menu_item {
             match menu_index {
                 0 => {
-                    // Sessions - open sessions modal
-                    self.state.close_menu();
-                    self.handle_open_sessions_modal()?;
+                    // Sessions - open submenu dropdown (keep menu open)
+                    self.state.open_sessions_submenu();
                 }
                 1 => {
                     // Files - open new file manager panel
@@ -103,7 +102,7 @@ impl App {
     }
 
     /// Open sessions modal to switch between projects
-    fn handle_open_sessions_modal(&mut self) -> Result<()> {
+    pub(super) fn handle_open_sessions_modal(&mut self) -> Result<()> {
         use termide_modal::{SessionItem, SessionsModal};
         use termide_session::{format_relative_time, list_all_sessions};
 
@@ -418,6 +417,106 @@ impl App {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    // =========================================================================
+    // Sessions submenu handling
+    // =========================================================================
+
+    /// Handle keyboard event in Sessions submenu
+    pub(super) fn handle_sessions_submenu_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+    ) -> Result<()> {
+        use termide_ui_render::SESSIONS_SUBMENU_ITEM_COUNT;
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Left => {
+                // Close submenu, return to menu
+                self.state.close_sessions_submenu();
+            }
+            KeyCode::Up => {
+                if self.state.ui.selected_sessions_item > 0 {
+                    self.state.ui.selected_sessions_item -= 1;
+                } else {
+                    self.state.ui.selected_sessions_item = SESSIONS_SUBMENU_ITEM_COUNT - 1;
+                }
+            }
+            KeyCode::Down => {
+                self.state.ui.selected_sessions_item =
+                    (self.state.ui.selected_sessions_item + 1) % SESSIONS_SUBMENU_ITEM_COUNT;
+            }
+            KeyCode::Right | KeyCode::Enter => {
+                self.execute_sessions_submenu_action()?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Execute action for selected Sessions submenu item
+    pub(super) fn execute_sessions_submenu_action(&mut self) -> Result<()> {
+        match self.state.ui.selected_sessions_item {
+            0 => {
+                // New session - open directory picker
+                self.state.close_menu();
+                self.handle_new_session()?;
+            }
+            1 => {
+                // Switch session - open sessions modal
+                self.state.close_menu();
+                self.handle_open_sessions_modal()?;
+            }
+            2 => {
+                // Change root path - open directory picker
+                self.state.close_menu();
+                self.handle_change_root_path()?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Open directory picker for creating new session
+    fn handle_new_session(&mut self) -> Result<()> {
+        use termide_modal::DirectoryPickerModal;
+
+        let t = i18n::t();
+        // Get current project root as starting directory
+        let initial_dir = self.project_root.clone();
+
+        let modal = DirectoryPickerModal::new(
+            initial_dir,
+            t.sessions_new().to_string(),
+            t.directory_picker_create().to_string(),
+        );
+        self.state.set_pending_action(
+            PendingAction::NewSession,
+            ActiveModal::DirectoryPicker(Box::new(modal)),
+        );
+
+        Ok(())
+    }
+
+    /// Open directory picker for changing root path of current session
+    fn handle_change_root_path(&mut self) -> Result<()> {
+        use termide_modal::DirectoryPickerModal;
+
+        let t = i18n::t();
+        // Get current project root as starting directory
+        let initial_dir = self.project_root.clone();
+
+        let modal = DirectoryPickerModal::new(
+            initial_dir,
+            t.sessions_change_root().to_string(),
+            t.directory_picker_move().to_string(),
+        );
+        self.state.set_pending_action(
+            PendingAction::ChangeRootPath,
+            ActiveModal::DirectoryPicker(Box::new(modal)),
+        );
+
         Ok(())
     }
 
