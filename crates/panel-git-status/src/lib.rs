@@ -23,6 +23,7 @@ use termide_git::{self as git, StagedFile, UnstagedFile};
 use termide_modal::{ActionButton, ActiveModal, InfoActionModal};
 use termide_state::PendingAction;
 use termide_theme::Theme;
+use termide_ui_render::InlineSelector;
 
 /// Section of the Git Status panel
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,10 +55,6 @@ impl Button {
             Button::Pull => "Pull",
             Button::Push => "Push",
         }
-    }
-
-    fn all() -> &'static [Button] {
-        &[Button::Commit, Button::Pull, Button::Push]
     }
 }
 
@@ -130,6 +127,8 @@ pub struct GitStatusPanel {
     last_click_index: Option<usize>,
     /// Modal request (for file properties)
     modal_request: Option<(termide_state::PendingAction, termide_modal::ActiveModal)>,
+    /// Loading indicator flag
+    is_loading: bool,
 }
 
 impl GitStatusPanel {
@@ -183,6 +182,7 @@ impl GitStatusPanel {
             last_click_section: None,
             last_click_index: None,
             modal_request: None,
+            is_loading: false,
         };
 
         panel.refresh();
@@ -226,6 +226,7 @@ impl GitStatusPanel {
             last_click_section: None,
             last_click_index: None,
             modal_request: None,
+            is_loading: false,
         };
 
         panel.refresh();
@@ -239,9 +240,14 @@ impl GitStatusPanel {
 
     /// Refresh git status
     pub fn refresh(&mut self) {
+        self.is_loading = true;
+
         let repo = match self.repos.get(self.selected_repo) {
             Some(r) => r.clone(),
-            None => return,
+            None => {
+                self.is_loading = false;
+                return;
+            }
         };
 
         self.branch = git::get_current_branch(&repo);
@@ -263,6 +269,8 @@ impl GitStatusPanel {
         if self.staged_cursor >= self.staged_files.len() && !self.staged_files.is_empty() {
             self.staged_cursor = self.staged_files.len() - 1;
         }
+
+        self.is_loading = false;
     }
 
     /// Move to next section
@@ -572,9 +580,35 @@ impl GitStatusPanel {
         files_area_height as usize
     }
 
+    /// Get list of buttons that should be visible based on current state
+    fn get_visible_buttons(&self) -> Vec<Button> {
+        let mut buttons = Vec::new();
+
+        // Commit - only if there are staged files
+        if !self.staged_files.is_empty() {
+            buttons.push(Button::Commit);
+        }
+
+        // Push - only if ahead > 0
+        if self.ahead > 0 {
+            buttons.push(Button::Push);
+        }
+
+        // Pull - only if behind > 0
+        if self.behind > 0 {
+            buttons.push(Button::Pull);
+        }
+
+        buttons
+    }
+
     /// Execute button action
     fn execute_button(&mut self) -> Vec<PanelEvent> {
-        let button = Button::all()[self.selected_button];
+        let buttons = self.get_visible_buttons();
+        if self.selected_button >= buttons.len() {
+            return vec![];
+        }
+        let button = buttons[self.selected_button];
         match button {
             Button::Commit => {
                 // TODO: Open commit modal
@@ -663,16 +697,9 @@ impl GitStatusPanel {
             .map(git::get_repo_name)
             .unwrap_or_else(|| "No repo".to_string());
         let repo_focused = self.current_section == Section::RepoSelector && is_focused;
-        let repo_width = self.render_selector(
-            &repo_name,
-            self.repo_dropdown_open,
-            repo_focused,
-            content_area.x,
-            y,
-            content_area.width / 2,
-            buf,
-            &theme,
-        );
+        let repo_selector =
+            InlineSelector::new(&repo_name, self.repo_dropdown_open, repo_focused, &theme);
+        let repo_width = repo_selector.render(content_area.x, y, content_area.width / 2, buf);
 
         // Branch selector (next to repo)
         let branch_name = self
@@ -683,23 +710,13 @@ impl GitStatusPanel {
         let branch_x = content_area.x + repo_width + 2;
         self.branch_selector_x = branch_x; // Save for mouse click detection
         let branch_max_width = content_area.width.saturating_sub(repo_width + 2);
-        self.render_selector(
+        let branch_selector = InlineSelector::new(
             &branch_name,
             self.branch_dropdown_open,
             branch_focused,
-            branch_x,
-            y,
-            branch_max_width,
-            buf,
             &theme,
         );
-
-        // Status indicators (right-aligned) - always show all three
-        let uncommitted = self.unstaged_files.len() + self.staged_files.len();
-        let status_text = format!("*{} ↑{} ↓{}", uncommitted, self.ahead, self.behind);
-        let status_width = status_text.width() as u16;
-        let status_x = content_area.x + content_area.width - status_width;
-        buf.set_string(status_x, y, &status_text, Style::default().fg(theme.fg));
+        branch_selector.render(branch_x, y, branch_max_width, buf);
 
         y += selector_height;
 
@@ -1035,7 +1052,7 @@ impl GitStatusPanel {
         theme: &ThemeColors,
         is_focused: bool,
     ) {
-        let buttons = Button::all();
+        let buttons = self.get_visible_buttons();
         let mut current_x = x;
 
         for (i, button) in buttons.iter().enumerate() {
@@ -1197,44 +1214,6 @@ impl GitStatusPanel {
         }
     }
 
-    /// Render inline dropdown selector: "[label ▼]"
-    fn render_selector(
-        &self,
-        label: &str,
-        is_open: bool,
-        is_focused: bool,
-        x: u16,
-        y: u16,
-        max_width: u16,
-        buf: &mut Buffer,
-        theme: &ThemeColors,
-    ) -> u16 {
-        let arrow = if is_open { "▲" } else { "▼" };
-        let style = if is_focused {
-            // Inverted cursor style
-            Style::default()
-                .fg(theme.bg)
-                .bg(theme.fg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.fg)
-        };
-
-        // Truncate label if needed
-        let max_label_len = max_width.saturating_sub(4) as usize; // "[" + " " + arrow + "]"
-        let truncated_label = if label.width() > max_label_len {
-            &label[..max_label_len]
-        } else {
-            label
-        };
-
-        let text = format!("[{} {}]", truncated_label, arrow);
-        let text_width = text.width() as u16;
-        buf.set_string(x, y, &text, style);
-
-        text_width
-    }
-
     /// Render dropdown list overlay
     fn render_dropdown_list(
         &self,
@@ -1344,26 +1323,25 @@ impl Panel for GitStatusPanel {
     }
 
     fn title(&self) -> String {
+        use termide_config::constants::LOADING_INDICATOR;
+
         let repo_name = self
             .current_repo()
             .map(git::get_repo_name)
             .unwrap_or_else(|| "No repo".to_string());
-
         let branch = self.branch.as_deref().unwrap_or("(detached)");
 
-        let mut title = format!("Git Status: {} ({})", repo_name, branch);
+        let uncommitted = self.unstaged_files.len() + self.staged_files.len();
+        let status = format!("*{} ↑{} ↓{}", uncommitted, self.ahead, self.behind);
 
-        if self.ahead > 0 || self.behind > 0 {
-            title.push(' ');
-            if self.ahead > 0 {
-                title.push_str(&format!("↑{}", self.ahead));
-            }
-            if self.behind > 0 {
-                title.push_str(&format!("↓{}", self.behind));
-            }
+        if self.is_loading {
+            format!(
+                "{} Git: {} ({}) {}",
+                LOADING_INDICATOR, repo_name, branch, status
+            )
+        } else {
+            format!("Git: {} ({}) {}", repo_name, branch, status)
         }
-
-        title
     }
 
     fn prepare_render(&mut self, theme: &Theme, _config: &Config) {
@@ -1391,6 +1369,16 @@ impl Panel for GitStatusPanel {
                         .iter()
                         .any(|p| current_repo.starts_with(p) || p.starts_with(current_repo));
                     if should_refresh {
+                        self.refresh();
+                        return CommandResult::NeedsRedraw(true);
+                    }
+                }
+                CommandResult::NeedsRedraw(false)
+            }
+            PanelCommand::OnFsUpdate { changed_path } => {
+                // Refresh on file changes within current repo
+                if let Some(current_repo) = self.current_repo() {
+                    if changed_path.starts_with(current_repo) {
                         self.refresh();
                         return CommandResult::NeedsRedraw(true);
                     }
@@ -1492,7 +1480,7 @@ impl Panel for GitStatusPanel {
             }
             KeyCode::Right => {
                 if self.current_section == Section::Buttons {
-                    let max = Button::all().len().saturating_sub(1);
+                    let max = self.get_visible_buttons().len().saturating_sub(1);
                     if self.selected_button < max {
                         self.selected_button += 1;
                     }
@@ -1800,7 +1788,7 @@ impl Panel for GitStatusPanel {
 
                     self.current_section = Section::Buttons;
                     // Calculate which button was clicked based on position
-                    let buttons = Button::all();
+                    let buttons = self.get_visible_buttons();
                     let content_x = self.last_area.x + 1;
                     let mut btn_x = content_x;
                     for (i, button) in buttons.iter().enumerate() {

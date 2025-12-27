@@ -9,6 +9,7 @@ use ratatui::{
     text::Span,
     widgets::{Block, Borders, Widget},
 };
+use unicode_width::UnicodeWidthStr;
 
 use termide_config::Config;
 use termide_core::{Panel, PanelConfig, RenderContext, ThemeColors};
@@ -102,17 +103,37 @@ pub fn render_collapsed_panel(
         buf.set_string(area.x + 1, y, buttons, style);
     }
 
-    // Title
+    // Title (truncated from start if too long)
     let title_start = area.x + 1 + buttons_width;
     let title_text = format!(" {} ", title);
-    let title_width = title_text.len() as u16;
+    let available_width = area.right().saturating_sub(title_start + 1) as usize;
 
-    if area.width > title_start - area.x + title_width {
-        buf.set_string(title_start, y, &title_text, style);
+    let title_text_width = title_text.width();
+    let (display_title, title_width) = if title_text_width <= available_width {
+        (title_text, title_text_width)
+    } else if available_width > 4 {
+        // Truncate from start, add "..."
+        let target_width = available_width.saturating_sub(3); // Reserve space for "..."
+        let mut chars: Vec<char> = title_text.chars().collect();
+        while chars.iter().collect::<String>().width() > target_width && !chars.is_empty() {
+            chars.remove(0);
+        }
+        let truncated = format!("...{}", chars.iter().collect::<String>());
+        let w = truncated.width();
+        (truncated, w)
+    } else {
+        // Too narrow, just show what we can
+        let truncated: String = title_text.chars().take(available_width).collect();
+        let w = truncated.width();
+        (truncated, w)
+    };
+
+    if !display_title.is_empty() {
+        buf.set_string(title_start, y, &display_title, style);
     }
 
     // Fill remaining with horizontal line
-    let fill_start = title_start + title_width;
+    let fill_start = title_start + title_width as u16;
     for x in fill_start..area.right() {
         buf[(x, y)].set_symbol("─").set_style(style);
     }
