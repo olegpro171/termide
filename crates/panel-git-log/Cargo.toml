@@ -18,3 +18,4 @@ termide-core = { path = "../core" }
 termide-git = { path = "../git" }
 termide-session = { path = "../session" }
 termide-theme = { path = "../theme" }
+termide-ui = { path = "../ui" }

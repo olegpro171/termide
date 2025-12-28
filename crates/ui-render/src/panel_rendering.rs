@@ -206,6 +206,7 @@ pub fn render_expanded_panel(
         panel_index,
         terminal_width: params.terminal_width,
         terminal_height: params.terminal_height,
+        border_right_x: Some(area.x + area.width - 1),
     };
 
     // Prepare panel for rendering (update cached theme/config)

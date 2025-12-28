@@ -127,11 +127,20 @@ pub fn get_git_status(dir: &Path) -> Option<GitStatusCache> {
         .to_path_buf();
 
     // Single git status command - parse both status and ignored files
+    // Use -c core.quotepath=false to show non-ASCII characters properly
     let mut status_map = HashMap::new();
     let mut ignored_files = HashSet::new();
 
-    if let Some(stdout) = git_command_stdout(&repo_root, &["status", "--porcelain=v1", "--ignored"])
-    {
+    if let Some(stdout) = git_command_stdout(
+        &repo_root,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "status",
+            "--porcelain=v1",
+            "--ignored",
+        ],
+    ) {
         for line in stdout.lines() {
             if line.len() < 4 {
                 continue;
@@ -356,9 +365,12 @@ pub fn get_repo_status(repo_path: &Path, item_path: &Path) -> Option<GitRepoStat
     //   ## branch...origin/branch [ahead N, behind M]
     //   !! ignored/file
     //    M modified/file
+    // Use -c core.quotepath=false to show non-ASCII characters properly
     let status_output = git_command_stdout(
         &repo_root,
         &[
+            "-c",
+            "core.quotepath=false",
             "status",
             "--porcelain=v1",
             "-b",
@@ -491,7 +503,17 @@ pub fn checkout_branch(repo: &Path, branch: &str) -> Result<(), String> {
 pub fn get_staged_files(repo: &Path) -> Vec<StagedFile> {
     let mut result = Vec::new();
 
-    if let Some(stdout) = git_command_stdout(repo, &["diff", "--cached", "--name-status"]) {
+    // Use -c core.quotepath=false to show non-ASCII characters properly
+    if let Some(stdout) = git_command_stdout(
+        repo,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--cached",
+            "--name-status",
+        ],
+    ) {
         for line in stdout.lines() {
             if let Some((status, path)) = line.split_once('\t') {
                 if let Some(status_char) = status.chars().next() {
@@ -512,7 +534,11 @@ pub fn get_unstaged_files(repo: &Path) -> Vec<UnstagedFile> {
     let mut result = Vec::new();
 
     // Get modified but not staged files
-    if let Some(stdout) = git_command_stdout(repo, &["diff", "--name-status"]) {
+    // Use -c core.quotepath=false to show non-ASCII characters properly
+    if let Some(stdout) = git_command_stdout(
+        repo,
+        &["-c", "core.quotepath=false", "diff", "--name-status"],
+    ) {
         for line in stdout.lines() {
             if let Some((status, path)) = line.split_once('\t') {
                 if let Some(status_char) = status.chars().next() {
@@ -527,8 +553,17 @@ pub fn get_unstaged_files(repo: &Path) -> Vec<UnstagedFile> {
     }
 
     // Get untracked files
-    if let Some(stdout) = git_command_stdout(repo, &["ls-files", "--others", "--exclude-standard"])
-    {
+    // Use -c core.quotepath=false to show non-ASCII characters properly
+    if let Some(stdout) = git_command_stdout(
+        repo,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+        ],
+    ) {
         for line in stdout.lines() {
             if !line.is_empty() {
                 result.push(UnstagedFile {

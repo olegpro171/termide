@@ -10,8 +10,10 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use termide_core::ThemeColors;
 use termide_i18n as i18n;
 use termide_theme::Theme;
+use termide_ui::ScrollBar;
 
 /// Dropdown menu item
 #[derive(Debug, Clone)]
@@ -97,16 +99,6 @@ impl<'a> Dropdown<'a> {
         (visible_count + 2) as u16 // +2 for borders
     }
 
-    /// Check if there are items above the visible area
-    fn can_scroll_up(&self) -> bool {
-        self.scroll_offset > 0
-    }
-
-    /// Check if there are items below the visible area
-    fn can_scroll_down(&self) -> bool {
-        self.scroll_offset + self.max_visible < self.items.len()
-    }
-
     pub fn render(&self, buf: &mut Buffer) {
         if self.items.is_empty() {
             return;
@@ -181,25 +173,20 @@ impl<'a> Dropdown<'a> {
 
         list.render(area, buf);
 
-        // Render scroll indicators
-        let indicator_style = Style::default().fg(self.theme.accented_fg);
-
-        // Up indicator (on top border, centered)
-        if self.can_scroll_up() {
-            let indicator_x = x + width / 2;
-            buf[(indicator_x, y)]
-                .set_symbol("▲")
-                .set_style(indicator_style);
-        }
-
-        // Down indicator (on bottom border, centered)
-        if self.can_scroll_down() {
-            let indicator_x = x + width / 2;
-            let indicator_y = y + height - 1;
-            buf[(indicator_x, indicator_y)]
-                .set_symbol("▼")
-                .set_style(indicator_style);
-        }
+        // Render scrollbar on right edge (inside border)
+        let visible_count = self.items.len().min(self.max_visible);
+        let theme_colors = ThemeColors::from(self.theme);
+        ScrollBar::render(
+            buf,
+            x + width - 1,            // Right border position
+            y + 1,                    // Inside top border
+            height.saturating_sub(2), // Inside borders
+            self.scroll_offset,
+            visible_count,
+            self.items.len(),
+            &theme_colors,
+            true, // Dropdown is always focused when visible
+        );
     }
 }
 

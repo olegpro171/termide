@@ -4,9 +4,11 @@
 
 pub mod config;
 pub mod path_utils;
+pub mod scrollbar;
 pub mod system_monitor;
 pub mod textarea;
 
+pub use scrollbar::ScrollBar;
 pub use textarea::TextArea;
 
 // Re-exports for convenience

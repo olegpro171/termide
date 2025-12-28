@@ -12,9 +12,10 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use termide_clipboard as clipboard;
+use termide_core::ThemeColors;
 use termide_i18n as i18n;
 use termide_theme::Theme;
-use termide_ui::TextArea;
+use termide_ui::{ScrollBar, TextArea};
 
 use crate::{centered_rect_with_size, Modal, ModalResult};
 
@@ -40,12 +41,16 @@ pub struct CommitModal {
     focus: FocusArea,
     /// Selected button index (0 = Commit, 1 = Cancel).
     selected_button: usize,
-    /// Last rendered textarea area (for mouse).
+    /// Last rendered textarea area (for mouse click positioning).
     last_textarea_area: Option<Rect>,
+    /// Last rendered textarea block area with border (for scroll detection).
+    last_textarea_block_area: Option<Rect>,
     /// Last rendered buttons area (for mouse).
     last_buttons_area: Option<Rect>,
     /// Visible textarea height (for scrolling).
     visible_height: usize,
+    /// Whether scroll should follow cursor (false after mouse scroll).
+    scroll_follows_cursor: bool,
 }
 
 impl CommitModal {
@@ -59,8 +64,10 @@ impl CommitModal {
             focus: FocusArea::Textarea,
             selected_button: 0,
             last_textarea_area: None,
+            last_textarea_block_area: None,
             last_buttons_area: None,
             visible_height: 3,
+            scroll_follows_cursor: true,
         }
     }
 
@@ -217,7 +224,7 @@ impl Modal for CommitModal {
         // Textarea area with border
         let textarea_block = Block::default().borders(Borders::ALL).border_style(
             if self.focus == FocusArea::Textarea {
-                Style::default().fg(theme.success)
+                Style::default().fg(theme.accented_fg)
             } else {
                 Style::default().fg(theme.disabled)
             },
@@ -225,13 +232,31 @@ impl Modal for CommitModal {
         let textarea_inner = textarea_block.inner(chunks[0]);
         textarea_block.render(chunks[0], buf);
 
-        // Update visible height and ensure cursor is visible
+        // Update visible height and ensure cursor is visible (unless user scrolled with mouse)
         self.visible_height = textarea_inner.height as usize;
-        self.textarea.ensure_cursor_visible(self.visible_height);
+        if self.scroll_follows_cursor {
+            self.textarea.ensure_cursor_visible(self.visible_height);
+        }
 
         // Render textarea content
         self.render_textarea(textarea_inner, buf, theme);
         self.last_textarea_area = Some(textarea_inner);
+        self.last_textarea_block_area = Some(chunks[0]);
+
+        // Render scrollbar for textarea
+        let total_lines = self.textarea.line_count();
+        let theme_colors = ThemeColors::from(theme);
+        ScrollBar::render(
+            buf,
+            chunks[0].x + chunks[0].width.saturating_sub(1), // Right border position
+            chunks[0].y + 1,                                 // Inside top border
+            chunks[0].height.saturating_sub(2),              // Inside borders
+            self.textarea.scroll_offset(),
+            self.visible_height,
+            total_lines,
+            &theme_colors,
+            self.focus == FocusArea::Textarea, // is_focused
+        );
 
         // Render buttons
         let commit_label = format!("[ {} ]", t.git_action_commit());
@@ -267,6 +292,9 @@ impl Modal for CommitModal {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ModalResult<Self::Result>>> {
+        // Any keyboard input means user is interacting - follow cursor again
+        self.scroll_follows_cursor = true;
+
         // Escape always cancels
         if key.code == KeyCode::Esc {
             return Ok(Some(ModalResult::Cancelled));
@@ -380,6 +408,21 @@ impl Modal for CommitModal {
                             self.textarea.move_end();
                         }
                     }
+                    KeyCode::PageUp => {
+                        let page_size = self.visible_height.max(1);
+                        // Move cursor up by page_size lines
+                        let cursor = self.textarea.cursor();
+                        let new_row = cursor.row.saturating_sub(page_size);
+                        self.textarea.set_cursor(new_row, cursor.col);
+                    }
+                    KeyCode::PageDown => {
+                        let page_size = self.visible_height.max(1);
+                        // Move cursor down by page_size lines
+                        let cursor = self.textarea.cursor();
+                        let max_row = self.textarea.line_count().saturating_sub(1);
+                        let new_row = (cursor.row + page_size).min(max_row);
+                        self.textarea.set_cursor(new_row, cursor.col);
+                    }
                     _ => {}
                 }
             }
@@ -428,6 +471,36 @@ impl Modal for CommitModal {
         mouse: MouseEvent,
         _modal_area: Rect,
     ) -> Result<Option<ModalResult<Self::Result>>> {
+        // Handle scroll events for textarea (use full block area with border)
+        if let Some(block_area) = self.last_textarea_block_area {
+            if mouse.row >= block_area.y
+                && mouse.row < block_area.y + block_area.height
+                && mouse.column >= block_area.x
+                && mouse.column < block_area.x + block_area.width
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        self.scroll_follows_cursor = false;
+                        let new_offset = self.textarea.scroll_offset().saturating_sub(3);
+                        self.textarea.set_scroll_offset(new_offset);
+                        return Ok(None);
+                    }
+                    MouseEventKind::ScrollDown => {
+                        self.scroll_follows_cursor = false;
+                        let max_offset = self
+                            .textarea
+                            .line_count()
+                            .saturating_sub(self.visible_height);
+                        let new_offset = (self.textarea.scroll_offset() + 3).min(max_offset);
+                        self.textarea.set_scroll_offset(new_offset);
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Only handle left click for the rest
         if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return Ok(None);
         }
@@ -440,6 +513,7 @@ impl Modal for CommitModal {
                 && mouse.column < textarea_area.x + textarea_area.width
             {
                 self.focus = FocusArea::Textarea;
+                self.scroll_follows_cursor = true; // Click means follow cursor again
                 let row = (mouse.row - textarea_area.y) as usize + self.textarea.scroll_offset();
                 let col = (mouse.column - textarea_area.x) as usize;
                 self.textarea.set_cursor(row, col);

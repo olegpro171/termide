@@ -1,6 +1,6 @@
 use anyhow::Result;
 use crossterm::event::KeyEvent;
-use ratatui::{buffer::Buffer, layout::Rect, style::Style};
+use ratatui::{buffer::Buffer, layout::Rect};
 use std::any::Any;
 use std::path::PathBuf;
 
@@ -12,6 +12,7 @@ use termide_i18n::t;
 use termide_modal::{ActiveModal, InputModal, ReplaceModal, SearchModal};
 use termide_state::PendingAction;
 use termide_theme::Theme;
+use termide_ui::ScrollBar;
 
 use crate::{
     clipboard,
@@ -72,6 +73,8 @@ pub struct Editor {
     config_update: Option<Config>,
     /// Status message to display to user
     pub(crate) status_message: Option<String>,
+    /// When true, viewport follows cursor. When false (after mouse scroll), viewport stays put.
+    scroll_follows_cursor: bool,
 }
 
 impl Editor {
@@ -99,6 +102,7 @@ impl Editor {
             modal_request: None,
             config_update: None,
             status_message: None,
+            scroll_follows_cursor: true,
         }
     }
 
@@ -192,6 +196,7 @@ impl Editor {
             modal_request: None,
             config_update: None,
             status_message: None,
+            scroll_follows_cursor: true,
         })
     }
 
@@ -219,6 +224,7 @@ impl Editor {
             modal_request: None,
             config_update: None,
             status_message: None,
+            scroll_follows_cursor: true,
         }
     }
 
@@ -473,12 +479,14 @@ impl Editor {
         let virtual_lines_total = self.virtual_line_count(config);
         self.render_cache.virtual_line_count = virtual_lines_total;
 
-        // Ensure cursor is visible
-        if self.config.word_wrap && content_width > 0 {
-            self.ensure_cursor_visible_word_wrap(content_height);
-        } else {
-            self.viewport
-                .ensure_cursor_visible(&self.cursor, virtual_lines_total);
+        // Ensure cursor is visible (only when viewport follows cursor)
+        if self.scroll_follows_cursor {
+            if self.config.word_wrap && content_width > 0 {
+                self.ensure_cursor_visible_word_wrap(content_height);
+            } else {
+                self.viewport
+                    .ensure_cursor_visible(&self.cursor, virtual_lines_total);
+            }
         }
 
         // Render with custom highlighter
@@ -1216,7 +1224,15 @@ impl Editor {
     }
 
     /// Render editor content
-    fn render_content(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, config: &Config) {
+    fn render_content(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &Theme,
+        config: &Config,
+        is_focused: bool,
+        border_right_x: Option<u16>,
+    ) {
         // Update viewport size (subtract space for line numbers)
         let (content_width, content_height) =
             rendering::calculate_content_dimensions(area.width, area.height);
@@ -1245,14 +1261,16 @@ impl Editor {
         let virtual_lines_total = self.virtual_line_count(config);
         self.render_cache.virtual_line_count = virtual_lines_total;
 
-        // Ensure cursor is visible
-        if self.config.word_wrap && content_width > 0 {
-            // Word wrap mode: use visual row-aware scrolling
-            self.ensure_cursor_visible_word_wrap(content_height);
-        } else {
-            // Standard mode: use physical line scrolling
-            self.viewport
-                .ensure_cursor_visible(&self.cursor, virtual_lines_total);
+        // Ensure cursor is visible (only when viewport follows cursor)
+        if self.scroll_follows_cursor {
+            if self.config.word_wrap && content_width > 0 {
+                // Word wrap mode: use visual row-aware scrolling
+                self.ensure_cursor_visible_word_wrap(content_height);
+            } else {
+                // Standard mode: use physical line scrolling
+                self.viewport
+                    .ensure_cursor_visible(&self.cursor, virtual_lines_total);
+            }
         }
 
         // Delegate to rendering orchestrator
@@ -1275,26 +1293,20 @@ impl Editor {
             content_height,
         );
 
-        // Render scroll indicators on the right edge
-        let scroll_offset = self.viewport.top_line;
-        let can_scroll_up = scroll_offset > 0;
-        let can_scroll_down = scroll_offset + content_height < virtual_lines_total;
-
-        if can_scroll_up || can_scroll_down {
-            let indicator_x = area.x + area.width.saturating_sub(1);
-            let indicator_style = Style::default().fg(theme.fg);
-
-            if can_scroll_up {
-                buf[(indicator_x, area.y)]
-                    .set_symbol("▲")
-                    .set_style(indicator_style);
-            }
-
-            if can_scroll_down && area.height > 0 {
-                buf[(indicator_x, area.y + area.height - 1)]
-                    .set_symbol("▼")
-                    .set_style(indicator_style);
-            }
+        // Render scrollbar on the right border
+        if let Some(border_x) = border_right_x {
+            let theme_colors = termide_core::ThemeColors::from(theme);
+            ScrollBar::render(
+                buf,
+                border_x,
+                area.y,
+                area.height,
+                self.viewport.top_line,
+                content_height,
+                virtual_lines_total,
+                &theme_colors,
+                is_focused,
+            );
         }
     }
 
@@ -1813,15 +1825,23 @@ impl Panel for Editor {
     fn render(&mut self, area: Rect, buf: &mut Buffer, ctx: &RenderContext) {
         // Update cached theme and config from render context
         // Note: We'll need to convert from PanelConfig/ThemeColors to our internal types
-        // For now, use the old cached values
-        let _ = ctx;
         // Use cached theme and config (updated by app layer before rendering)
         let theme = self.render_cache.theme;
         let config = self.render_cache.config.clone();
-        self.render_content(area, buf, &theme, &config);
+        self.render_content(
+            area,
+            buf,
+            &theme,
+            &config,
+            ctx.is_focused,
+            ctx.border_right_x,
+        );
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Vec<PanelEvent> {
+        // Any keyboard input should make viewport follow cursor again
+        self.scroll_follows_cursor = true;
+
         // Note: Key translation should be done at app level before calling handle_key
         // If you need translation, call translate_hotkey from termide-core or keyboard module
 
@@ -1864,19 +1884,13 @@ impl Panel for Editor {
         match mouse.kind {
             MouseEventKind::ScrollUp => {
                 self.viewport.scroll_up(3);
-                if self.cursor.line >= self.viewport.bottom_line() {
-                    self.cursor.line = self.viewport.bottom_line().saturating_sub(1);
-                    self.clamp_cursor();
-                }
+                self.scroll_follows_cursor = false;
                 return vec![];
             }
             MouseEventKind::ScrollDown => {
                 self.viewport
                     .scroll_down(3, self.render_cache.virtual_line_count);
-                if self.cursor.line < self.viewport.top_line {
-                    self.cursor.line = self.viewport.top_line;
-                    self.clamp_cursor();
-                }
+                self.scroll_follows_cursor = false;
                 return vec![];
             }
             _ => {}
@@ -1960,6 +1974,7 @@ impl Panel for Editor {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                self.scroll_follows_cursor = true;
                 self.close_search();
 
                 if self
@@ -1985,6 +2000,7 @@ impl Panel for Editor {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                self.scroll_follows_cursor = true;
                 self.cursor = Cursor::at(target_line, target_col);
                 if let Some(ref mut selection) = self.selection {
                     selection.active = self.cursor;
@@ -1993,6 +2009,7 @@ impl Panel for Editor {
                     .ensure_cursor_visible(&self.cursor, self.render_cache.virtual_line_count);
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                self.scroll_follows_cursor = true;
                 if self.input.click_tracker.skip_next_up {
                     self.input.click_tracker.skip_next_up = false;
                     return vec![];

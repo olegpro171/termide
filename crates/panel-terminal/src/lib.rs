@@ -31,7 +31,7 @@ use vte::Parser;
 use termide_config::Config;
 use termide_core::{CommandResult, Panel, PanelCommand, PanelEvent, RenderContext, SessionPanel};
 use termide_theme::Theme;
-use termide_ui::system_monitor::DiskSpaceInfo;
+use termide_ui::{system_monitor::DiskSpaceInfo, ScrollBar};
 
 /// Full-featured terminal with PTY
 pub struct Terminal {
@@ -999,33 +999,35 @@ impl Panel for Terminal {
         let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
 
-        // Render scroll indicators for scrollback history
+        // Render scrollbar for scrollback history
         let screen = self.screen.read().expect("Terminal screen lock poisoned");
         let scrollback_len = screen.scrollback.len();
         let scroll_offset = screen.scroll_offset;
         let use_alt_screen = screen.use_alt_screen;
         drop(screen);
 
-        // Only show indicators when not in alt screen and there's scrollback
+        // Only show scrollbar when not in alt screen and there's scrollback
         if !use_alt_screen && scrollback_len > 0 {
-            let can_scroll_up = scroll_offset < scrollback_len;
-            let can_scroll_down = scroll_offset > 0;
+            if let Some(border_x) = ctx.border_right_x {
+                // Terminal scroll is inverted: scroll_offset=0 means at bottom (current),
+                // scroll_offset=scrollback_len means at top (oldest history)
+                // Convert to standard scrollbar coordinates (0=top, max=bottom)
+                let visible_height = area.height as usize;
+                let total_lines = scrollback_len + visible_height;
+                let scrollbar_offset = scrollback_len.saturating_sub(scroll_offset);
 
-            if can_scroll_up || can_scroll_down {
-                let indicator_x = area.x + area.width.saturating_sub(1);
-                let indicator_style = Style::default().fg(theme.fg);
-
-                if can_scroll_up {
-                    buf[(indicator_x, area.y)]
-                        .set_symbol("▲")
-                        .set_style(indicator_style);
-                }
-
-                if can_scroll_down && area.height > 0 {
-                    buf[(indicator_x, area.y + area.height - 1)]
-                        .set_symbol("▼")
-                        .set_style(indicator_style);
-                }
+                let theme_colors = termide_core::ThemeColors::from(&self.cached_theme);
+                ScrollBar::render(
+                    buf,
+                    border_x,
+                    area.y,
+                    area.height,
+                    scrollbar_offset,
+                    visible_height,
+                    total_lines,
+                    &theme_colors,
+                    ctx.is_focused,
+                );
             }
         }
     }

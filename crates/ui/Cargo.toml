@@ -15,4 +15,5 @@ anyhow.workspace = true
 # Workspace crates
 termide-clipboard = { path = "../clipboard" }
 termide-config = { path = "../config" }
+termide-core = { path = "../core" }
 termide-system-monitor = { path = "../system-monitor" }

@@ -23,6 +23,7 @@ use termide_git::{self as git, StagedFile, UnstagedFile};
 use termide_modal::{ActionButton, ActiveModal, InfoActionModal};
 use termide_state::PendingAction;
 use termide_theme::Theme;
+use termide_ui::ScrollBar;
 use termide_ui_render::InlineSelector;
 
 /// Section of the Git Status panel
@@ -32,12 +33,23 @@ pub enum Section {
     RepoSelector,
     /// Branch selector
     BranchSelector,
-    /// Unstaged files section
-    Unstaged,
-    /// Staged files section
-    Staged,
+    /// Files list (both unstaged and staged)
+    Files,
     /// Action buttons
     Buttons,
+}
+
+/// Current selection in the files area
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Selection {
+    /// Cursor on Unstaged header (selecting [Stage all] button)
+    UnstagedHeader,
+    /// Cursor on an unstaged file at given index
+    UnstagedFile(usize),
+    /// Cursor on Staged header (selecting [Unstage all] button)
+    StagedHeader,
+    /// Cursor on a staged file at given index
+    StagedFile(usize),
 }
 
 /// Button in the Git Status panel
@@ -77,16 +89,14 @@ pub struct GitStatusPanel {
     staged_files: Vec<StagedFile>,
     /// Current section
     current_section: Section,
-    /// Cursor position in unstaged list
-    unstaged_cursor: usize,
-    /// Cursor position in staged list
-    staged_cursor: usize,
+    /// Cursor position as virtual line (0..total_virtual_lines, includes headers)
+    cursor: usize,
     /// Selected button index
     selected_button: usize,
-    /// Scroll offset for unstaged list
-    unstaged_scroll: usize,
-    /// Scroll offset for staged list
-    staged_scroll: usize,
+    /// Unified scroll offset for files area
+    scroll_offset: usize,
+    /// Cached viewport height for scroll calculations
+    viewport_height: usize,
     /// Cached theme colors for rendering
     cached_theme: ThemeColors,
     /// Last render area (for mouse handling)
@@ -104,10 +114,8 @@ pub struct GitStatusPanel {
     selector_y: u16,
     /// Branch selector X position (for mouse click detection)
     branch_selector_x: u16,
-    /// Unstaged files area
-    unstaged_area: Rect,
-    /// Staged files area
-    staged_area: Rect,
+    /// Files area (combined unstaged + staged)
+    files_area: Rect,
     /// Buttons row Y position
     buttons_y: u16,
     /// Repo dropdown area (for mouse click detection)
@@ -157,11 +165,10 @@ impl GitStatusPanel {
             unstaged_files: Vec::new(),
             staged_files: Vec::new(),
             current_section: Section::RepoSelector,
-            unstaged_cursor: 0,
-            staged_cursor: 0,
+            cursor: 0,
             selected_button: 0,
-            unstaged_scroll: 0,
-            staged_scroll: 0,
+            scroll_offset: 0,
+            viewport_height: 0,
             cached_theme: ThemeColors::default(),
             last_area: Rect::default(),
             status_message: None,
@@ -170,8 +177,7 @@ impl GitStatusPanel {
             dropdown_cursor: 0,
             selector_y: 0,
             branch_selector_x: 0,
-            unstaged_area: Rect::default(),
-            staged_area: Rect::default(),
+            files_area: Rect::default(),
             buttons_y: 0,
             repo_dropdown_area: None,
             branch_dropdown_area: None,
@@ -201,11 +207,10 @@ impl GitStatusPanel {
             unstaged_files: Vec::new(),
             staged_files: Vec::new(),
             current_section: Section::RepoSelector,
-            unstaged_cursor: 0,
-            staged_cursor: 0,
+            cursor: 0,
             selected_button: 0,
-            unstaged_scroll: 0,
-            staged_scroll: 0,
+            scroll_offset: 0,
+            viewport_height: 0,
             cached_theme: ThemeColors::default(),
             last_area: Rect::default(),
             status_message: None,
@@ -214,8 +219,7 @@ impl GitStatusPanel {
             dropdown_cursor: 0,
             selector_y: 0,
             branch_selector_x: 0,
-            unstaged_area: Rect::default(),
-            staged_area: Rect::default(),
+            files_area: Rect::default(),
             buttons_y: 0,
             repo_dropdown_area: None,
             branch_dropdown_area: None,
@@ -262,12 +266,14 @@ impl GitStatusPanel {
         self.unstaged_files.sort_by(|a, b| a.path.cmp(&b.path));
         self.staged_files.sort_by(|a, b| a.path.cmp(&b.path));
 
-        // Adjust cursors
-        if self.unstaged_cursor >= self.unstaged_files.len() && !self.unstaged_files.is_empty() {
-            self.unstaged_cursor = self.unstaged_files.len() - 1;
+        // Adjust cursor to stay within bounds (cursor is virtual line)
+        let max_cursor = self.total_virtual_lines().saturating_sub(1);
+        if self.cursor > max_cursor {
+            self.cursor = max_cursor;
         }
-        if self.staged_cursor >= self.staged_files.len() && !self.staged_files.is_empty() {
-            self.staged_cursor = self.staged_files.len() - 1;
+        // Ensure cursor is on a selectable line
+        while self.cursor > 0 && !self.is_selectable_line(self.cursor) {
+            self.cursor -= 1;
         }
 
         self.is_loading = false;
@@ -278,22 +284,14 @@ impl GitStatusPanel {
         self.current_section = match self.current_section {
             Section::RepoSelector => Section::BranchSelector,
             Section::BranchSelector => {
-                if !self.unstaged_files.is_empty() {
-                    Section::Unstaged
-                } else if !self.staged_files.is_empty() {
-                    Section::Staged
+                let total_files = self.unstaged_files.len() + self.staged_files.len();
+                if total_files > 0 {
+                    Section::Files
                 } else {
                     Section::Buttons
                 }
             }
-            Section::Unstaged => {
-                if !self.staged_files.is_empty() {
-                    Section::Staged
-                } else {
-                    Section::Buttons
-                }
-            }
-            Section::Staged => Section::Buttons,
+            Section::Files => Section::Buttons,
             Section::Buttons => Section::RepoSelector,
         };
     }
@@ -303,19 +301,11 @@ impl GitStatusPanel {
         self.current_section = match self.current_section {
             Section::RepoSelector => Section::Buttons,
             Section::BranchSelector => Section::RepoSelector,
-            Section::Unstaged => Section::BranchSelector,
-            Section::Staged => {
-                if !self.unstaged_files.is_empty() {
-                    Section::Unstaged
-                } else {
-                    Section::BranchSelector
-                }
-            }
+            Section::Files => Section::BranchSelector,
             Section::Buttons => {
-                if !self.staged_files.is_empty() {
-                    Section::Staged
-                } else if !self.unstaged_files.is_empty() {
-                    Section::Unstaged
+                let total_files = self.unstaged_files.len() + self.staged_files.len();
+                if total_files > 0 {
+                    Section::Files
                 } else {
                     Section::BranchSelector
                 }
@@ -323,22 +313,122 @@ impl GitStatusPanel {
         };
     }
 
-    /// Get file at cursor from unstaged section
-    fn get_selected_unstaged(&self) -> Vec<PathBuf> {
-        self.unstaged_files
-            .get(self.unstaged_cursor)
-            .map(|f| f.path.clone())
-            .into_iter()
-            .collect()
+    /// Get current selection based on cursor position (virtual line)
+    fn get_selection(&self) -> Option<Selection> {
+        let unstaged_header = 0;
+        let unstaged_start = 1;
+        let unstaged_end = unstaged_start + self.unstaged_files.len();
+        let staged_header = unstaged_end;
+        let staged_start = staged_header + 1;
+
+        if self.cursor == unstaged_header && !self.unstaged_files.is_empty() {
+            Some(Selection::UnstagedHeader)
+        } else if self.cursor >= unstaged_start && self.cursor < unstaged_end {
+            Some(Selection::UnstagedFile(self.cursor - unstaged_start))
+        } else if self.cursor == staged_header && !self.staged_files.is_empty() {
+            Some(Selection::StagedHeader)
+        } else if self.cursor >= staged_start {
+            let idx = self.cursor - staged_start;
+            if idx < self.staged_files.len() {
+                Some(Selection::StagedFile(idx))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
-    /// Get file at cursor from staged section
+    /// Check if a virtual line is selectable (files and headers with buttons)
+    fn is_selectable_line(&self, vline: usize) -> bool {
+        let unstaged_header = 0;
+        let unstaged_end = 1 + self.unstaged_files.len();
+        let staged_header = unstaged_end;
+        let staged_end = staged_header + 1 + self.staged_files.len();
+
+        if vline == unstaged_header {
+            !self.unstaged_files.is_empty() // Has [Stage all] button
+        } else if vline == staged_header {
+            !self.staged_files.is_empty() // Has [Unstage all] button
+        } else {
+            vline > unstaged_header && vline < staged_end && vline != staged_header
+        }
+    }
+
+    /// Check if there are any files (unstaged or staged)
+    fn has_any_files(&self) -> bool {
+        !self.unstaged_files.is_empty() || !self.staged_files.is_empty()
+    }
+
+    /// Get first selectable virtual line
+    fn first_selectable_line(&self) -> usize {
+        if !self.unstaged_files.is_empty() {
+            0 // Unstaged header
+        } else if !self.staged_files.is_empty() {
+            1 // Staged header (vline = 1 when no unstaged files)
+        } else {
+            0
+        }
+    }
+
+    /// Get last selectable virtual line
+    fn last_selectable_line(&self) -> usize {
+        let total = self.total_virtual_lines();
+        for vline in (0..total).rev() {
+            if self.is_selectable_line(vline) {
+                return vline;
+            }
+        }
+        0
+    }
+
+    /// Cursor position is the virtual line directly
+    fn cursor_to_virtual_line(&self) -> usize {
+        self.cursor
+    }
+
+    /// Ensure cursor is visible in viewport
+    fn ensure_cursor_visible(&mut self) {
+        if self.viewport_height == 0 {
+            return;
+        }
+        let cursor_line = self.cursor_to_virtual_line();
+        if cursor_line < self.scroll_offset {
+            self.scroll_offset = cursor_line;
+        } else if cursor_line >= self.scroll_offset + self.viewport_height {
+            self.scroll_offset = cursor_line - self.viewport_height + 1;
+        }
+    }
+
+    /// Get total virtual lines count (headers + files)
+    fn total_virtual_lines(&self) -> usize {
+        2 + self.unstaged_files.len() + self.staged_files.len()
+    }
+
+    /// Get file at cursor from unstaged section (for backward compatibility)
+    fn get_selected_unstaged(&self) -> Vec<PathBuf> {
+        match self.get_selection() {
+            Some(Selection::UnstagedFile(idx)) => self
+                .unstaged_files
+                .get(idx)
+                .map(|f| f.path.clone())
+                .into_iter()
+                .collect(),
+            _ => vec![],
+        }
+    }
+
+    /// Get file at cursor from staged section (for backward compatibility)
     fn get_selected_staged(&self) -> Vec<PathBuf> {
-        self.staged_files
-            .get(self.staged_cursor)
-            .map(|f| f.path.clone())
-            .into_iter()
-            .collect()
+        match self.get_selection() {
+            Some(Selection::StagedFile(idx)) => self
+                .staged_files
+                .get(idx)
+                .map(|f| f.path.clone())
+                .into_iter()
+                .collect(),
+            _ => vec![],
+        }
     }
 
     /// Execute stage action
@@ -433,11 +523,17 @@ impl GitStatusPanel {
     }
 
     /// Show file properties modal with Diff/Revert actions
-    fn show_file_properties(&mut self, is_staged: bool) -> Vec<PanelEvent> {
+    fn show_file_properties(&mut self) -> Vec<PanelEvent> {
         let t = termide_i18n::t();
 
+        let (is_staged, idx) = match self.get_selection() {
+            Some(Selection::UnstagedFile(idx)) => (false, idx),
+            Some(Selection::StagedFile(idx)) => (true, idx),
+            _ => return vec![], // Headers or nothing selected
+        };
+
         let (file_path, status_str) = if is_staged {
-            if let Some(file) = self.staged_files.get(self.staged_cursor) {
+            if let Some(file) = self.staged_files.get(idx) {
                 let path = PathBuf::from(&file.path);
                 let status = match file.status {
                     'A' => t.git_status_added(),
@@ -450,7 +546,7 @@ impl GitStatusPanel {
             } else {
                 return vec![];
             }
-        } else if let Some(file) = self.unstaged_files.get(self.unstaged_cursor) {
+        } else if let Some(file) = self.unstaged_files.get(idx) {
             let path = PathBuf::from(&file.path);
             let status = if file.untracked {
                 t.git_status_untracked()
@@ -525,61 +621,6 @@ impl GitStatusPanel {
         }
     }
 
-    /// Ensure unstaged cursor is visible (auto-scroll)
-    fn ensure_unstaged_visible(&mut self, visible_height: usize) {
-        if visible_height == 0 {
-            return;
-        }
-        if self.unstaged_cursor < self.unstaged_scroll {
-            self.unstaged_scroll = self.unstaged_cursor;
-        } else if self.unstaged_cursor >= self.unstaged_scroll + visible_height {
-            self.unstaged_scroll = self.unstaged_cursor - visible_height + 1;
-        }
-    }
-
-    /// Ensure staged cursor is visible (auto-scroll)
-    fn ensure_staged_visible(&mut self, visible_height: usize) {
-        if visible_height == 0 {
-            return;
-        }
-        if self.staged_cursor < self.staged_scroll {
-            self.staged_scroll = self.staged_cursor;
-        } else if self.staged_cursor >= self.staged_scroll + visible_height {
-            self.staged_scroll = self.staged_cursor - visible_height + 1;
-        }
-    }
-
-    /// Calculate visible height for unstaged section based on last_area
-    fn calc_unstaged_visible_height(&self) -> usize {
-        // Layout constants (same as in render_content)
-        let selector_height: u16 = 1;
-        let separator_height: u16 = 1;
-        let buttons_height: u16 = 2;
-        let fixed_height = selector_height + separator_height * 3 + buttons_height;
-
-        let content_height = self.last_area.height.saturating_sub(fixed_height + 2);
-        let unstaged_height = content_height / 2;
-        let files_area_height = unstaged_height.saturating_sub(1);
-
-        files_area_height as usize
-    }
-
-    /// Calculate visible height for staged section based on last_area
-    fn calc_staged_visible_height(&self) -> usize {
-        // Layout constants (same as in render_content)
-        let selector_height: u16 = 1;
-        let separator_height: u16 = 1;
-        let buttons_height: u16 = 2;
-        let fixed_height = selector_height + separator_height * 3 + buttons_height;
-
-        let content_height = self.last_area.height.saturating_sub(fixed_height + 2);
-        let unstaged_height = content_height / 2;
-        let staged_height = content_height.saturating_sub(unstaged_height);
-        let files_area_height = staged_height.saturating_sub(1);
-
-        files_area_height as usize
-    }
-
     /// Get list of buttons that should be visible based on current state
     fn get_visible_buttons(&self) -> Vec<Button> {
         let mut buttons = Vec::new();
@@ -652,60 +693,53 @@ impl GitStatusPanel {
         }
     }
 
-    /// Render the panel content with new layout:
+    /// Render the panel content with unified scroll layout:
     /// - Top: Repo selector + Branch selector (sticky)
-    /// - Middle: Unstaged section (scrollable with scrollbar)
-    /// - Middle: Staged section (scrollable with scrollbar)
+    /// - Middle: Files area (unified scroll: unstaged header, unstaged files, staged header, staged files)
     /// - Bottom: Action buttons (sticky)
-    fn render_content(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
+    fn render_content(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        is_focused: bool,
+        border_right_x: Option<u16>,
+    ) {
         if area.height < 5 {
             return;
         }
 
         let theme = self.cached_theme.clone();
-
-        // area is already the inner content area (border handled by ui-render)
         let content_area = area;
 
         // Layout constants
-        let selector_height: u16 = 1; // Top: repo + branch selectors
-        let separator_height: u16 = 1; // Horizontal line before buttons only
-        let buttons_height: u16 = 1; // Bottom: buttons row
-
-        // Fixed zones (selector + separator before buttons + buttons)
+        let selector_height: u16 = 1;
+        let separator_height: u16 = 1;
+        let buttons_height: u16 = 1;
         let fixed_height = selector_height + separator_height + buttons_height;
-        let content_height = content_area.height.saturating_sub(fixed_height);
+        let files_area_height = content_area.height.saturating_sub(fixed_height) as usize;
 
-        // Calculate needed height for each zone (header + files)
-        let unstaged_needed = 1 + self.unstaged_files.len() as u16;
-        let staged_needed = 1 + self.staged_files.len() as u16;
-        let total_needed = unstaged_needed + staged_needed;
+        // Cache viewport height for scroll calculations
+        self.viewport_height = files_area_height;
 
-        // Dynamic height allocation
-        let (unstaged_total, staged_total) = if total_needed <= content_height {
-            // Both fit completely
-            (unstaged_needed, staged_needed)
-        } else if unstaged_needed <= content_height / 2 {
-            // Unstaged fits in half, give staged the rest
-            (
-                unstaged_needed,
-                content_height.saturating_sub(unstaged_needed),
-            )
-        } else if staged_needed <= content_height / 2 {
-            // Staged fits in half, give unstaged the rest
-            (content_height.saturating_sub(staged_needed), staged_needed)
-        } else {
-            // Both need more than half - split evenly
-            let half = content_height / 2;
-            (half, content_height.saturating_sub(half))
-        };
+        // Virtual content layout
+        let unstaged_header_line = 0;
+        let unstaged_files_start = 1;
+        let unstaged_files_end = unstaged_files_start + self.unstaged_files.len();
+        let staged_header_line = unstaged_files_end;
+        let staged_files_start = staged_header_line + 1;
+        let total_virtual_lines = self.total_virtual_lines();
+
+        // Clamp scroll offset
+        let max_scroll = total_virtual_lines.saturating_sub(files_area_height);
+        if self.scroll_offset > max_scroll {
+            self.scroll_offset = max_scroll;
+        }
 
         let mut y = content_area.y;
 
         // === TOP ZONE: Selectors ===
         self.selector_y = y;
 
-        // Repo selector
         let repo_name = self
             .current_repo()
             .map(git::get_repo_name)
@@ -715,14 +749,13 @@ impl GitStatusPanel {
             InlineSelector::new(&repo_name, self.repo_dropdown_open, repo_focused, &theme);
         let repo_width = repo_selector.render(content_area.x, y, content_area.width / 2, buf);
 
-        // Branch selector (next to repo)
         let branch_name = self
             .branch
             .clone()
             .unwrap_or_else(|| "(detached)".to_string());
         let branch_focused = self.current_section == Section::BranchSelector && is_focused;
         let branch_x = content_area.x + repo_width + 2;
-        self.branch_selector_x = branch_x; // Save for mouse click detection
+        self.branch_selector_x = branch_x;
         let branch_max_width = content_area.width.saturating_sub(repo_width + 2);
         let branch_selector = InlineSelector::new(
             &branch_name,
@@ -734,114 +767,166 @@ impl GitStatusPanel {
 
         y += selector_height;
 
-        // === MIDDLE ZONE: Unstaged section ===
-        let unstaged_active = self.current_section == Section::Unstaged;
-        let unstaged_title = format!("Unstaged ({})", self.unstaged_files.len());
-        let stage_all_btn = if !self.unstaged_files.is_empty() {
-            Some("[Stage all]")
-        } else {
-            None
-        };
-        self.stage_all_btn_area = self.render_section_header(
-            &unstaged_title,
-            stage_all_btn,
-            content_area.x,
-            y,
-            content_area.width,
-            buf,
-            &theme,
-            unstaged_active,
-        );
-        y += 1;
+        // === MIDDLE ZONE: Files area (unified scroll) ===
+        let files_y = y;
+        let files_width = content_area.width;
 
-        // Unstaged files area (with scrollbar on right)
-        let files_width = content_area.width.saturating_sub(1); // Leave space for scrollbar
-        let unstaged_files_height = unstaged_total.saturating_sub(1); // Minus header
-
-        // Store unstaged area for mouse handling
-        self.unstaged_area = Rect {
+        // Store files area for mouse handling
+        self.files_area = Rect {
             x: content_area.x,
-            y,
+            y: files_y,
             width: files_width,
-            height: unstaged_files_height,
+            height: files_area_height as u16,
         };
 
-        self.render_unstaged_files(
-            content_area.x,
-            y,
-            files_width,
-            unstaged_files_height,
-            buf,
-            &theme,
-            is_focused,
-        );
+        let files_active = self.current_section == Section::Files && is_focused;
 
-        // Scrollbar for unstaged
-        self.render_scrollbar(
-            content_area.x + content_area.width - 1,
-            y,
-            unstaged_files_height,
-            self.unstaged_scroll,
-            self.unstaged_files.len(),
-            buf,
-            &theme,
-            unstaged_active,
-        );
-        y += unstaged_files_height;
+        // Render visible virtual lines
+        for screen_row in 0..files_area_height {
+            let vline = self.scroll_offset + screen_row;
+            if vline >= total_virtual_lines {
+                break;
+            }
+            let line_y = files_y + screen_row as u16;
 
-        // === MIDDLE ZONE: Staged section ===
-        let staged_active = self.current_section == Section::Staged;
-        let staged_title = format!("Staged ({})", self.staged_files.len());
-        let unstage_all_btn = if !self.staged_files.is_empty() {
-            Some("[Unstage all]")
-        } else {
-            None
-        };
-        self.unstage_all_btn_area = self.render_section_header(
-            &staged_title,
-            unstage_all_btn,
-            content_area.x,
-            y,
-            content_area.width,
-            buf,
-            &theme,
-            staged_active,
-        );
-        y += 1;
+            if vline == unstaged_header_line {
+                // Unstaged header
+                let title = format!("Unstaged ({})", self.unstaged_files.len());
+                let btn = if !self.unstaged_files.is_empty() {
+                    Some("[Stage all]")
+                } else {
+                    None
+                };
+                let is_selected = self.cursor == vline && files_active;
+                self.stage_all_btn_area = self.render_section_header_simple(
+                    &title,
+                    btn,
+                    is_selected,
+                    content_area.x,
+                    line_y,
+                    files_width,
+                    buf,
+                    &theme,
+                );
+            } else if vline >= unstaged_files_start && vline < unstaged_files_end {
+                // Unstaged file
+                let file_idx = vline - unstaged_files_start;
+                let is_selected = self.cursor == vline && files_active;
+                self.render_unstaged_file_line(
+                    file_idx,
+                    is_selected,
+                    content_area.x,
+                    line_y,
+                    files_width,
+                    buf,
+                    &theme,
+                    files_active,
+                );
+            } else if vline == staged_header_line {
+                // Staged header
+                let title = format!("Staged ({})", self.staged_files.len());
+                let btn = if !self.staged_files.is_empty() {
+                    Some("[Unstage all]")
+                } else {
+                    None
+                };
+                let is_selected = self.cursor == vline && files_active;
+                self.unstage_all_btn_area = self.render_section_header_simple(
+                    &title,
+                    btn,
+                    is_selected,
+                    content_area.x,
+                    line_y,
+                    files_width,
+                    buf,
+                    &theme,
+                );
+            } else if vline >= staged_files_start {
+                // Staged file
+                let file_idx = vline - staged_files_start;
+                let is_selected = self.cursor == vline && files_active;
+                self.render_staged_file_line(
+                    file_idx,
+                    is_selected,
+                    content_area.x,
+                    line_y,
+                    files_width,
+                    buf,
+                    &theme,
+                    files_active,
+                );
+            }
+        }
 
-        // Staged files area (with scrollbar on right)
-        let staged_files_height = staged_total.saturating_sub(1); // Minus header
+        // Single scrollbar for entire files area
+        if let Some(border_x) = border_right_x {
+            ScrollBar::render(
+                buf,
+                border_x,
+                files_y,
+                files_area_height as u16,
+                self.scroll_offset,
+                files_area_height,
+                total_virtual_lines,
+                &theme,
+                files_active,
+            );
+        }
 
-        // Store staged area for mouse handling
-        self.staged_area = Rect {
-            x: content_area.x,
-            y,
-            width: files_width,
-            height: staged_files_height,
-        };
+        // === STICKY HEADERS ===
+        // When a section header scrolls out of view, render it at the top of files area
+        // so user always knows which section they're viewing
 
-        self.render_staged_files(
-            content_area.x,
-            y,
-            files_width,
-            staged_files_height,
-            buf,
-            &theme,
-            is_focused,
-        );
+        // Staged header is sticky if we've scrolled past it (into staged files only)
+        let staged_sticky =
+            self.scroll_offset > staged_header_line && !self.staged_files.is_empty();
 
-        // Scrollbar for staged
-        self.render_scrollbar(
-            content_area.x + content_area.width - 1,
-            y,
-            staged_files_height,
-            self.staged_scroll,
-            self.staged_files.len(),
-            buf,
-            &theme,
-            staged_active,
-        );
-        y += staged_files_height;
+        // Unstaged header is sticky if scrolled past line 0, but NOT if staged is sticky
+        let unstaged_sticky = self.scroll_offset > unstaged_header_line
+            && !self.unstaged_files.is_empty()
+            && !staged_sticky;
+
+        if unstaged_sticky {
+            let title = format!("Unstaged ({})", self.unstaged_files.len());
+            let btn = if !self.unstaged_files.is_empty() {
+                Some("[Stage all]")
+            } else {
+                None
+            };
+            let is_selected = self.cursor == unstaged_header_line && files_active;
+            self.stage_all_btn_area = self.render_section_header_simple(
+                &title,
+                btn,
+                is_selected,
+                content_area.x,
+                files_y,
+                files_width,
+                buf,
+                &theme,
+            );
+        }
+
+        if staged_sticky {
+            let title = format!("Staged ({})", self.staged_files.len());
+            let btn = if !self.staged_files.is_empty() {
+                Some("[Unstage all]")
+            } else {
+                None
+            };
+            let is_selected = self.cursor == staged_header_line && files_active;
+            self.unstage_all_btn_area = self.render_section_header_simple(
+                &title,
+                btn,
+                is_selected,
+                content_area.x,
+                files_y,
+                files_width,
+                buf,
+                &theme,
+            );
+        }
+
+        y += files_area_height as u16;
 
         // Separator before buttons
         self.render_horizontal_line(content_area.x, y, content_area.width, buf, &theme);
@@ -860,7 +945,7 @@ impl GitStatusPanel {
 
         // === DROPDOWNS (rendered last to overlay) ===
         if self.repo_dropdown_open {
-            let dropdown_y = content_area.y + 1; // Below selector
+            let dropdown_y = content_area.y + 1;
             let max_dropdown_height = content_area.height.saturating_sub(3) as usize;
             let repo_names: Vec<String> =
                 self.repos.iter().map(|p| git::get_repo_name(p)).collect();
@@ -871,7 +956,6 @@ impl GitStatusPanel {
                 0
             };
             self.dropdown_scroll = scroll_offset;
-            // Save dropdown area for mouse click detection
             self.repo_dropdown_area = Some(Rect {
                 x: content_area.x,
                 y: dropdown_y,
@@ -893,7 +977,7 @@ impl GitStatusPanel {
             self.repo_dropdown_area = None;
         }
         if self.branch_dropdown_open {
-            let dropdown_y = content_area.y + 1; // Below selector
+            let dropdown_y = content_area.y + 1;
             let max_dropdown_height = content_area.height.saturating_sub(3) as usize;
             let current_branch_idx = self
                 .branches
@@ -907,7 +991,6 @@ impl GitStatusPanel {
                 0
             };
             self.dropdown_scroll = scroll_offset;
-            // Save dropdown area for mouse click detection
             self.branch_dropdown_area = Some(Rect {
                 x: branch_x,
                 y: dropdown_y,
@@ -930,131 +1013,174 @@ impl GitStatusPanel {
         }
     }
 
-    /// Render unstaged files list (without header)
-    fn render_unstaged_files(
+    /// Render section header with optional button selection highlighting
+    fn render_section_header_simple(
         &self,
+        title: &str,
+        action_btn: Option<&str>,
+        is_selected: bool,
         x: u16,
         y: u16,
         width: u16,
-        height: u16,
         buf: &mut Buffer,
         theme: &ThemeColors,
-        is_focused: bool,
-    ) {
-        if height == 0 {
-            return;
-        }
+    ) -> Option<Rect> {
+        let header_style = Style::default().fg(theme.disabled);
 
-        for (i, file) in self
-            .unstaged_files
-            .iter()
-            .enumerate()
-            .skip(self.unstaged_scroll)
-            .take(height as usize)
-        {
-            let line_y = y + (i - self.unstaged_scroll) as u16;
-            let is_cursor = self.current_section == Section::Unstaged && i == self.unstaged_cursor;
+        // Draw line with embedded title
+        let title_with_space = format!(" {} ", title);
+        let title_width = title_with_space.width();
 
-            // Determine color based on status (like file manager)
-            let (fg_color, extra_modifier) = if file.untracked {
-                (theme.success, Modifier::empty()) // Untracked = green (like Added)
-            } else {
-                match file.status {
-                    'M' => (theme.warning, Modifier::empty()), // Modified = yellow
-                    'D' => (theme.error, Modifier::CROSSED_OUT), // Deleted = red + strikethrough
-                    'A' => (theme.success, Modifier::empty()), // Added = green
-                    _ => (theme.fg, Modifier::empty()),        // Default
+        // Left part of line
+        buf.set_string(x, y, "─", header_style);
+
+        // Title
+        buf.set_string(x + 1, y, &title_with_space, header_style);
+
+        // Rest of line (or action button)
+        let after_title = x + 1 + title_width as u16;
+        let remaining = width.saturating_sub(1 + title_width as u16);
+
+        if let Some(btn_text) = action_btn {
+            let btn_width = btn_text.width() as u16;
+            if remaining > btn_width + 2 {
+                // Line before button
+                let line_width = remaining - btn_width - 1;
+                for dx in 0..line_width {
+                    buf.set_string(after_title + dx, y, "─", header_style);
                 }
-            };
-
-            let style = if is_cursor && is_focused {
-                // Inverted cursor: fg becomes bg, theme.bg becomes fg
-                Style::default()
-                    .fg(theme.bg)
-                    .bg(fg_color)
-                    .add_modifier(Modifier::BOLD)
+                // Button - inverted style when selected
+                let btn_x = after_title + line_width;
+                let btn_style = if is_selected {
+                    Style::default()
+                        .fg(theme.bg)
+                        .bg(theme.fg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.fg)
+                };
+                buf.set_string(btn_x, y, btn_text, btn_style);
+                Some(Rect {
+                    x: btn_x,
+                    y,
+                    width: btn_width,
+                    height: 1,
+                })
             } else {
-                Style::default().fg(fg_color).add_modifier(extra_modifier)
-            };
-
-            // Fill entire line width for cursor (only when focused)
-            if is_cursor && is_focused {
-                for dx in 0..width {
-                    buf[(x + dx, line_y)].set_symbol(" ").set_style(style);
+                for dx in 0..remaining {
+                    buf.set_string(after_title + dx, y, "─", header_style);
                 }
+                None
             }
-
-            let path_str = file.path.to_string_lossy();
-            let line = format!(" {}", path_str); // No status char, just path
-            let truncated = if line.width() > width as usize {
-                &line[..width as usize]
-            } else {
-                &line
-            };
-            buf.set_string(x, line_y, truncated, style);
+        } else {
+            for dx in 0..remaining {
+                buf.set_string(after_title + dx, y, "─", header_style);
+            }
+            None
         }
     }
 
-    /// Render staged files list (without header)
-    fn render_staged_files(
+    /// Render a single unstaged file line
+    fn render_unstaged_file_line(
         &self,
+        file_idx: usize,
+        is_selected: bool,
         x: u16,
         y: u16,
         width: u16,
-        height: u16,
         buf: &mut Buffer,
         theme: &ThemeColors,
         is_focused: bool,
     ) {
-        if height == 0 {
-            return;
-        }
+        let file = match self.unstaged_files.get(file_idx) {
+            Some(f) => f,
+            None => return,
+        };
 
-        for (i, file) in self
-            .staged_files
-            .iter()
-            .enumerate()
-            .skip(self.staged_scroll)
-            .take(height as usize)
-        {
-            let line_y = y + (i - self.staged_scroll) as u16;
-            let is_cursor = self.current_section == Section::Staged && i == self.staged_cursor;
-
-            // Determine color based on status (like file manager)
-            let (fg_color, extra_modifier) = match file.status {
-                'M' => (theme.warning, Modifier::empty()), // Modified = yellow
-                'D' => (theme.error, Modifier::CROSSED_OUT), // Deleted = red + strikethrough
-                'A' => (theme.success, Modifier::empty()), // Added = green
-                'R' => (theme.success, Modifier::empty()), // Renamed = green
-                _ => (theme.fg, Modifier::empty()),        // Default
-            };
-
-            let style = if is_cursor && is_focused {
-                // Inverted cursor: fg becomes bg, theme.bg becomes fg
-                Style::default()
-                    .fg(theme.bg)
-                    .bg(fg_color)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(fg_color).add_modifier(extra_modifier)
-            };
-
-            // Fill entire line width for cursor (only when focused)
-            if is_cursor && is_focused {
-                for dx in 0..width {
-                    buf[(x + dx, line_y)].set_symbol(" ").set_style(style);
-                }
+        let (fg_color, extra_modifier) = if file.untracked {
+            (theme.success, Modifier::empty())
+        } else {
+            match file.status {
+                'M' => (theme.warning, Modifier::empty()),
+                'D' => (theme.error, Modifier::CROSSED_OUT),
+                'A' => (theme.success, Modifier::empty()),
+                _ => (theme.fg, Modifier::empty()),
             }
+        };
 
-            let path_str = file.path.to_string_lossy();
-            let line = format!(" {}", path_str); // No status char, just path
-            let truncated = if line.width() > width as usize {
-                &line[..width as usize]
-            } else {
-                &line
-            };
-            buf.set_string(x, line_y, truncated, style);
+        let style = if is_selected && is_focused {
+            Style::default()
+                .fg(theme.bg)
+                .bg(fg_color)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(fg_color).add_modifier(extra_modifier)
+        };
+
+        if is_selected && is_focused {
+            for dx in 0..width {
+                buf[(x + dx, y)].set_symbol(" ").set_style(style);
+            }
         }
+
+        let path_str = file.path.to_string_lossy();
+        let line = format!(" {}", path_str);
+        let truncated = if line.width() > width as usize {
+            &line[..width as usize]
+        } else {
+            &line
+        };
+        buf.set_string(x, y, truncated, style);
+    }
+
+    /// Render a single staged file line
+    fn render_staged_file_line(
+        &self,
+        file_idx: usize,
+        is_selected: bool,
+        x: u16,
+        y: u16,
+        width: u16,
+        buf: &mut Buffer,
+        theme: &ThemeColors,
+        is_focused: bool,
+    ) {
+        let file = match self.staged_files.get(file_idx) {
+            Some(f) => f,
+            None => return,
+        };
+
+        let (fg_color, extra_modifier) = match file.status {
+            'M' => (theme.warning, Modifier::empty()),
+            'D' => (theme.error, Modifier::CROSSED_OUT),
+            'A' => (theme.success, Modifier::empty()),
+            'R' => (theme.success, Modifier::empty()),
+            _ => (theme.fg, Modifier::empty()),
+        };
+
+        let style = if is_selected && is_focused {
+            Style::default()
+                .fg(theme.bg)
+                .bg(fg_color)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(fg_color).add_modifier(extra_modifier)
+        };
+
+        if is_selected && is_focused {
+            for dx in 0..width {
+                buf[(x + dx, y)].set_symbol(" ").set_style(style);
+            }
+        }
+
+        let path_str = file.path.to_string_lossy();
+        let line = format!(" {}", path_str);
+        let truncated = if line.width() > width as usize {
+            &line[..width as usize]
+        } else {
+            &line
+        };
+        buf.set_string(x, y, truncated, style);
     }
 
     fn render_buttons(
@@ -1109,122 +1235,6 @@ impl GitStatusPanel {
         let style = Style::default().fg(theme.border);
         for i in 0..width {
             buf[(x + i, y)].set_symbol("─").set_style(style);
-        }
-    }
-
-    /// Render section header with horizontal line: "─ Title (count) ───── [Button]"
-    /// Active zone uses focused border color, inactive uses normal border.
-    /// Title text uses the same color as the line.
-    /// Returns the button area if button_label was provided.
-    fn render_section_header(
-        &self,
-        title: &str,
-        button_label: Option<&str>,
-        x: u16,
-        y: u16,
-        width: u16,
-        buf: &mut Buffer,
-        theme: &ThemeColors,
-        is_active: bool,
-    ) -> Option<Rect> {
-        // Active zone: focused border color for line and title (bold)
-        // Inactive zone: normal border color for line and title
-        let line_color = if is_active {
-            theme.border_focused
-        } else {
-            theme.border
-        };
-        let line_style = Style::default().fg(line_color);
-        let title_style = if is_active {
-            Style::default().fg(line_color).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(line_color)
-        };
-
-        // Calculate button position if present
-        let (button_area, line_end) = if let Some(btn) = button_label {
-            let btn_width = btn.width() as u16;
-            let btn_x = x + width - btn_width;
-            let area = Rect {
-                x: btn_x,
-                y,
-                width: btn_width,
-                height: 1,
-            };
-            (Some(area), btn_x)
-        } else {
-            (None, x + width)
-        };
-
-        // "─ "
-        buf[(x, y)].set_symbol("─").set_style(line_style);
-        buf[(x + 1, y)].set_symbol(" ").set_style(line_style);
-
-        // Title
-        let title_x = x + 2;
-        buf.set_string(title_x, y, title, title_style);
-
-        // " ─────────" (up to button or end)
-        let after_title = title_x + title.width() as u16 + 1;
-        for i in after_title..line_end {
-            buf[(i, y)].set_symbol("─").set_style(line_style);
-        }
-
-        // Render button if present (same style as title)
-        if let Some(btn) = button_label {
-            buf.set_string(line_end, y, btn, title_style);
-        }
-
-        button_area
-    }
-
-    /// Render vertical scrollbar
-    /// Active zone uses focused border color for thumb, inactive uses disabled.
-    fn render_scrollbar(
-        &self,
-        x: u16,
-        y_start: u16,
-        height: u16,
-        scroll_offset: usize,
-        total_items: usize,
-        buf: &mut Buffer,
-        theme: &ThemeColors,
-        is_active: bool,
-    ) {
-        if total_items == 0 || height == 0 || total_items <= height as usize {
-            return; // No scrollbar needed
-        }
-
-        let track_style = Style::default().fg(theme.disabled);
-        let thumb_color = if is_active {
-            theme.border_focused
-        } else {
-            theme.disabled
-        };
-        let thumb_style = Style::default().fg(thumb_color);
-
-        let visible_ratio = height as f32 / total_items as f32;
-        let thumb_height = (height as f32 * visible_ratio).max(1.0) as u16;
-        let max_scroll = total_items.saturating_sub(height as usize);
-        let scroll_ratio = if max_scroll > 0 {
-            scroll_offset as f32 / max_scroll as f32
-        } else {
-            0.0
-        };
-        let thumb_pos = ((height.saturating_sub(thumb_height)) as f32 * scroll_ratio) as u16;
-
-        for i in 0..height {
-            let symbol = if i >= thumb_pos && i < thumb_pos + thumb_height {
-                "█" // Thumb
-            } else {
-                "░" // Track
-            };
-            let style = if i >= thumb_pos && i < thumb_pos + thumb_height {
-                thumb_style
-            } else {
-                track_style
-            };
-            buf[(x, y_start + i)].set_symbol(symbol).set_style(style);
         }
     }
 
@@ -1366,7 +1376,7 @@ impl Panel for GitStatusPanel {
         self.last_area = area;
 
         // Render content (border is handled by ui-render)
-        self.render_content(area, buf, ctx.is_focused);
+        self.render_content(area, buf, ctx.is_focused, ctx.border_right_x);
     }
 
     fn captures_escape(&self) -> bool {
@@ -1432,54 +1442,96 @@ impl Panel for GitStatusPanel {
                             self.dropdown_cursor -= 1;
                         }
                     }
-                    Section::Unstaged => {
-                        if self.unstaged_cursor > 0 {
-                            self.unstaged_cursor -= 1;
-                            let visible = self.calc_unstaged_visible_height();
-                            self.ensure_unstaged_visible(visible);
-                        }
-                    }
-                    Section::Staged => {
-                        if self.staged_cursor > 0 {
-                            self.staged_cursor -= 1;
-                            let visible = self.calc_staged_visible_height();
-                            self.ensure_staged_visible(visible);
+                    Section::Files => {
+                        // Check if at first selectable line
+                        let first = self.first_selectable_line();
+                        if self.cursor == first {
+                            // At top - go to BranchSelector
+                            self.current_section = Section::BranchSelector;
+                        } else {
+                            // Move cursor up, skipping non-selectable lines
+                            let mut new_cursor = self.cursor;
+                            while new_cursor > 0 {
+                                new_cursor -= 1;
+                                if self.is_selectable_line(new_cursor) {
+                                    self.cursor = new_cursor;
+                                    self.ensure_cursor_visible();
+                                    break;
+                                }
+                            }
                         }
                     }
                     Section::Buttons => {
-                        // Navigate up from buttons goes to previous section
-                        self.prev_section();
+                        // Navigate up from buttons goes to Files (or BranchSelector if no files)
+                        if self.has_any_files() {
+                            self.current_section = Section::Files;
+                            self.cursor = self.last_selectable_line();
+                            self.ensure_cursor_visible();
+                        } else {
+                            self.current_section = Section::BranchSelector;
+                        }
                     }
                 }
             }
             KeyCode::Down => {
                 match self.current_section {
                     Section::RepoSelector => {
-                        // Navigate in dropdown if open
-                        if self.repo_dropdown_open && self.dropdown_cursor + 1 < self.repos.len() {
-                            self.dropdown_cursor += 1;
+                        if self.repo_dropdown_open {
+                            // Navigate in dropdown
+                            if self.dropdown_cursor + 1 < self.repos.len() {
+                                self.dropdown_cursor += 1;
+                            }
+                        } else {
+                            // Go to Files or Buttons
+                            if self.has_any_files() {
+                                self.current_section = Section::Files;
+                                self.cursor = self.first_selectable_line();
+                                self.ensure_cursor_visible();
+                            } else {
+                                self.current_section = Section::Buttons;
+                            }
                         }
                     }
                     Section::BranchSelector => {
-                        // Navigate in dropdown if open
-                        if self.branch_dropdown_open
-                            && self.dropdown_cursor + 1 < self.branches.len()
-                        {
-                            self.dropdown_cursor += 1;
+                        if self.branch_dropdown_open {
+                            // Navigate in dropdown
+                            if self.dropdown_cursor + 1 < self.branches.len() {
+                                self.dropdown_cursor += 1;
+                            }
+                        } else {
+                            // Go to Files or Buttons
+                            if self.has_any_files() {
+                                self.current_section = Section::Files;
+                                self.cursor = self.first_selectable_line();
+                                self.ensure_cursor_visible();
+                            } else {
+                                self.current_section = Section::Buttons;
+                            }
                         }
                     }
-                    Section::Unstaged => {
-                        if self.unstaged_cursor + 1 < self.unstaged_files.len() {
-                            self.unstaged_cursor += 1;
-                            let visible = self.calc_unstaged_visible_height();
-                            self.ensure_unstaged_visible(visible);
-                        }
-                    }
-                    Section::Staged => {
-                        if self.staged_cursor + 1 < self.staged_files.len() {
-                            self.staged_cursor += 1;
-                            let visible = self.calc_staged_visible_height();
-                            self.ensure_staged_visible(visible);
+                    Section::Files => {
+                        // Check if at last selectable line
+                        let last = self.last_selectable_line();
+                        if self.cursor == last {
+                            // At bottom - go to Buttons
+                            self.current_section = Section::Buttons;
+                            // Scroll viewport to show all content (including empty headers)
+                            let total = self.total_virtual_lines();
+                            if total > self.viewport_height {
+                                self.scroll_offset = total - self.viewport_height;
+                            }
+                        } else {
+                            // Move cursor down, skipping non-selectable lines
+                            let max = self.total_virtual_lines();
+                            let mut new_cursor = self.cursor;
+                            while new_cursor + 1 < max {
+                                new_cursor += 1;
+                                if self.is_selectable_line(new_cursor) {
+                                    self.cursor = new_cursor;
+                                    self.ensure_cursor_visible();
+                                    break;
+                                }
+                            }
                         }
                     }
                     Section::Buttons => {
@@ -1487,38 +1539,82 @@ impl Panel for GitStatusPanel {
                     }
                 }
             }
-            KeyCode::Left => {
-                if self.current_section == Section::Buttons && self.selected_button > 0 {
-                    self.selected_button -= 1;
+            KeyCode::PageUp => {
+                if self.current_section == Section::Files {
+                    let page_size = self.viewport_height.max(1);
+                    let mut new_cursor = self.cursor.saturating_sub(page_size);
+                    // Find nearest selectable line
+                    while new_cursor > 0 && !self.is_selectable_line(new_cursor) {
+                        new_cursor -= 1;
+                    }
+                    if self.is_selectable_line(new_cursor) {
+                        self.cursor = new_cursor;
+                    }
+                    self.ensure_cursor_visible();
                 }
             }
-            KeyCode::Right => {
-                if self.current_section == Section::Buttons {
+            KeyCode::PageDown => {
+                if self.current_section == Section::Files {
+                    let max = self.total_virtual_lines();
+                    let page_size = self.viewport_height.max(1);
+                    let mut new_cursor = (self.cursor + page_size).min(max.saturating_sub(1));
+                    // Find nearest selectable line
+                    while new_cursor + 1 < max && !self.is_selectable_line(new_cursor) {
+                        new_cursor += 1;
+                    }
+                    if self.is_selectable_line(new_cursor) {
+                        self.cursor = new_cursor;
+                    }
+                    self.ensure_cursor_visible();
+                }
+            }
+            KeyCode::Left => match self.current_section {
+                Section::BranchSelector => {
+                    self.current_section = Section::RepoSelector;
+                }
+                Section::Buttons => {
+                    if self.selected_button > 0 {
+                        self.selected_button -= 1;
+                    }
+                }
+                _ => {}
+            },
+            KeyCode::Right => match self.current_section {
+                Section::RepoSelector => {
+                    self.current_section = Section::BranchSelector;
+                }
+                Section::Buttons => {
                     let max = self.get_visible_buttons().len().saturating_sub(1);
                     if self.selected_button < max {
                         self.selected_button += 1;
                     }
                 }
-            }
-            // Space - open file properties modal
-            KeyCode::Char(' ') => match self.current_section {
-                Section::Unstaged if !self.unstaged_files.is_empty() => {
-                    return self.show_file_properties(false);
-                }
-                Section::Staged if !self.staged_files.is_empty() => {
-                    return self.show_file_properties(true);
-                }
                 _ => {}
             },
-            // Insert - stage file instantly in Unstaged zone
+            // Space - open file properties modal (only for files, not headers)
+            KeyCode::Char(' ') => {
+                if self.current_section == Section::Files
+                    && matches!(
+                        self.get_selection(),
+                        Some(Selection::UnstagedFile(_)) | Some(Selection::StagedFile(_))
+                    )
+                {
+                    return self.show_file_properties();
+                }
+            }
+            // Insert - stage file (if cursor is on unstaged file)
             KeyCode::Insert => {
-                if self.current_section == Section::Unstaged && !self.unstaged_files.is_empty() {
+                if self.current_section == Section::Files
+                    && matches!(self.get_selection(), Some(Selection::UnstagedFile(_)))
+                {
                     self.do_stage();
                 }
             }
-            // Delete - unstage file instantly in Staged zone
+            // Delete - unstage file (if cursor is on staged file)
             KeyCode::Delete => {
-                if self.current_section == Section::Staged && !self.staged_files.is_empty() {
+                if self.current_section == Section::Files
+                    && matches!(self.get_selection(), Some(Selection::StagedFile(_)))
+                {
                     self.do_unstage();
                 }
             }
@@ -1528,14 +1624,14 @@ impl Panel for GitStatusPanel {
             }
             KeyCode::Enter => {
                 match self.current_section {
-                    // Enter in Unstaged zone - stage file
-                    Section::Unstaged if !self.unstaged_files.is_empty() => {
-                        self.do_stage();
-                    }
-                    // Enter in Staged zone - unstage file
-                    Section::Staged if !self.staged_files.is_empty() => {
-                        self.do_unstage();
-                    }
+                    // Enter in Files zone - stage/unstage depending on selection
+                    Section::Files => match self.get_selection() {
+                        Some(Selection::UnstagedHeader) => self.do_stage_all(),
+                        Some(Selection::StagedHeader) => self.do_unstage_all(),
+                        Some(Selection::UnstagedFile(_)) => self.do_stage(),
+                        Some(Selection::StagedFile(_)) => self.do_unstage(),
+                        None => {}
+                    },
                     Section::RepoSelector => {
                         if self.repo_dropdown_open {
                             // Select repo and close dropdown
@@ -1569,7 +1665,6 @@ impl Panel for GitStatusPanel {
                     Section::Buttons => {
                         return self.execute_button();
                     }
-                    _ => {}
                 }
             }
             KeyCode::Esc => {
@@ -1598,23 +1693,17 @@ impl Panel for GitStatusPanel {
         let row = event.row;
 
         match event.kind {
-            // Scroll handling - scroll zone under mouse cursor
+            // Scroll handling - unified scroll for files area
             MouseEventKind::ScrollUp => {
-                if self.is_in_rect(col, row, self.unstaged_area) {
-                    self.unstaged_scroll = self.unstaged_scroll.saturating_sub(3);
-                } else if self.is_in_rect(col, row, self.staged_area) {
-                    self.staged_scroll = self.staged_scroll.saturating_sub(3);
+                if self.is_in_rect(col, row, self.files_area) {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(3);
                 }
             }
             MouseEventKind::ScrollDown => {
-                if self.is_in_rect(col, row, self.unstaged_area) {
-                    let visible = self.unstaged_area.height as usize;
-                    let max_scroll = self.unstaged_files.len().saturating_sub(visible);
-                    self.unstaged_scroll = (self.unstaged_scroll + 3).min(max_scroll);
-                } else if self.is_in_rect(col, row, self.staged_area) {
-                    let visible = self.staged_area.height as usize;
-                    let max_scroll = self.staged_files.len().saturating_sub(visible);
-                    self.staged_scroll = (self.staged_scroll + 3).min(max_scroll);
+                if self.is_in_rect(col, row, self.files_area) {
+                    let total_lines = self.total_virtual_lines();
+                    let max_scroll = total_lines.saturating_sub(self.viewport_height);
+                    self.scroll_offset = (self.scroll_offset + 3).min(max_scroll);
                 }
             }
 
@@ -1675,16 +1764,34 @@ impl Panel for GitStatusPanel {
                     }
                 }
 
-                // Check if click is in unstaged area
-                if self.is_in_rect(col, row, self.unstaged_area) {
+                // Check if click is in files area (unified)
+                if self.is_in_rect(col, row, self.files_area) {
                     // Close any open dropdown
                     self.repo_dropdown_open = false;
                     self.branch_dropdown_open = false;
 
-                    let relative_row = (row - self.unstaged_area.y) as usize;
-                    let idx = self.unstaged_scroll + relative_row;
+                    let relative_row = (row - self.files_area.y) as usize;
+                    let vline = self.scroll_offset + relative_row;
 
-                    if idx < self.unstaged_files.len() {
+                    // Virtual layout constants
+                    let unstaged_files_start = 1;
+                    let unstaged_files_end = unstaged_files_start + self.unstaged_files.len();
+                    let staged_header_line = unstaged_files_end;
+                    let staged_files_start = staged_header_line + 1;
+                    let staged_files_end = staged_files_start + self.staged_files.len();
+
+                    // Determine what was clicked
+                    let unstaged_header_line = 0;
+
+                    if vline == unstaged_header_line && !self.unstaged_files.is_empty() {
+                        // Clicked on unstaged header (with Stage all button)
+                        self.current_section = Section::Files;
+                        self.cursor = vline;
+                        self.last_click_time = Some(now);
+                        self.last_click_section = Some(Section::Files);
+                        self.last_click_index = Some(vline);
+                    } else if vline >= unstaged_files_start && vline < unstaged_files_end {
+                        // Clicked on unstaged file
                         // Check for double-click
                         let is_double_click =
                             if let (Some(last_time), Some(last_section), Some(last_idx)) = (
@@ -1694,42 +1801,37 @@ impl Panel for GitStatusPanel {
                             ) {
                                 now.duration_since(last_time).as_millis()
                                     < termide_config::constants::DOUBLE_CLICK_INTERVAL_MS
-                                    && last_section == Section::Unstaged
-                                    && last_idx == idx
+                                    && last_section == Section::Files
+                                    && last_idx == vline
                             } else {
                                 false
                             };
 
                         if is_double_click {
-                            // Double-click in unstaged = stage file
-                            self.unstaged_cursor = idx;
-                            self.current_section = Section::Unstaged;
+                            // Double-click on unstaged = stage file
+                            self.cursor = vline;
+                            self.current_section = Section::Files;
                             self.do_stage();
-                            // Reset click state
                             self.last_click_time = None;
                             self.last_click_section = None;
                             self.last_click_index = None;
                         } else {
                             // Single click - select item
-                            self.current_section = Section::Unstaged;
-                            self.unstaged_cursor = idx;
-                            // Save for double-click detection
+                            self.current_section = Section::Files;
+                            self.cursor = vline;
                             self.last_click_time = Some(now);
-                            self.last_click_section = Some(Section::Unstaged);
-                            self.last_click_index = Some(idx);
+                            self.last_click_section = Some(Section::Files);
+                            self.last_click_index = Some(vline);
                         }
-                    }
-                }
-                // Check if click is in staged area
-                else if self.is_in_rect(col, row, self.staged_area) {
-                    // Close any open dropdown
-                    self.repo_dropdown_open = false;
-                    self.branch_dropdown_open = false;
-
-                    let relative_row = (row - self.staged_area.y) as usize;
-                    let idx = self.staged_scroll + relative_row;
-
-                    if idx < self.staged_files.len() {
+                    } else if vline == staged_header_line && !self.staged_files.is_empty() {
+                        // Clicked on staged header (with Unstage all button)
+                        self.current_section = Section::Files;
+                        self.cursor = vline;
+                        self.last_click_time = Some(now);
+                        self.last_click_section = Some(Section::Files);
+                        self.last_click_index = Some(vline);
+                    } else if vline >= staged_files_start && vline < staged_files_end {
+                        // Clicked on staged file
                         // Check for double-click
                         let is_double_click =
                             if let (Some(last_time), Some(last_section), Some(last_idx)) = (
@@ -1739,31 +1841,30 @@ impl Panel for GitStatusPanel {
                             ) {
                                 now.duration_since(last_time).as_millis()
                                     < termide_config::constants::DOUBLE_CLICK_INTERVAL_MS
-                                    && last_section == Section::Staged
-                                    && last_idx == idx
+                                    && last_section == Section::Files
+                                    && last_idx == vline
                             } else {
                                 false
                             };
 
                         if is_double_click {
-                            // Double-click in staged = unstage file
-                            self.staged_cursor = idx;
-                            self.current_section = Section::Staged;
+                            // Double-click on staged = unstage file
+                            self.cursor = vline;
+                            self.current_section = Section::Files;
                             self.do_unstage();
-                            // Reset click state
                             self.last_click_time = None;
                             self.last_click_section = None;
                             self.last_click_index = None;
                         } else {
                             // Single click - select item
-                            self.current_section = Section::Staged;
-                            self.staged_cursor = idx;
-                            // Save for double-click detection
+                            self.current_section = Section::Files;
+                            self.cursor = vline;
                             self.last_click_time = Some(now);
-                            self.last_click_section = Some(Section::Staged);
-                            self.last_click_index = Some(idx);
+                            self.last_click_section = Some(Section::Files);
+                            self.last_click_index = Some(vline);
                         }
                     }
+                    // Clicks on empty header lines are ignored
                 }
                 // Check if click is on selector row
                 else if row == self.selector_y {

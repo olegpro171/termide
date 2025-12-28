@@ -6,7 +6,6 @@ pub mod dropdown;
 pub mod inline_selector;
 pub mod menu;
 pub mod panel_rendering;
-pub mod scroll_indicator;
 pub mod status_bar;
 pub mod theme_dropdown;
 
@@ -22,6 +21,5 @@ pub use menu::{
 pub use panel_rendering::{
     render_collapsed_panel, render_dividers, render_expanded_panel, ExpandedPanelParams,
 };
-pub use scroll_indicator::{render_scroll_indicators, ScrollState};
 pub use status_bar::{StatusBar, StatusBarParams};
 pub use theme_dropdown::ThemeDropdown;

@@ -13,7 +13,7 @@ pub use file_info::FileInfo;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{buffer::Buffer, layout::Rect, prelude::Widget, style::Style, widgets::Paragraph};
+use ratatui::{buffer::Buffer, layout::Rect, prelude::Widget, widgets::Paragraph};
 use std::any::Any;
 use std::collections::HashSet;
 use std::fs;
@@ -29,7 +29,7 @@ use termide_git::{get_git_status_async, GitStatus, GitStatusAsyncResult, GitStat
 use termide_modal::{ActiveModal, ConfirmModal, ContentSearchModal, FileSearchModal, InputModal};
 use termide_state::{DirSizeResult, PendingAction};
 use termide_theme::Theme;
-use termide_ui::{clipboard, path_utils};
+use termide_ui::{clipboard, path_utils, ScrollBar};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum DragMode {
@@ -698,25 +698,20 @@ impl Panel for FileManager {
 
         paragraph.render(area, buf);
 
-        // Render scroll indicators on the right edge
-        let can_scroll_up = self.scroll_offset > 0;
-        let can_scroll_down = self.scroll_offset + content_height < self.entries.len();
-
-        if can_scroll_up || can_scroll_down {
-            let indicator_x = area.x + area.width.saturating_sub(1);
-            let indicator_style = Style::default().fg(self.cached_theme.fg);
-
-            if can_scroll_up {
-                buf[(indicator_x, area.y)]
-                    .set_symbol("▲")
-                    .set_style(indicator_style);
-            }
-
-            if can_scroll_down && area.height > 0 {
-                buf[(indicator_x, area.y + area.height - 1)]
-                    .set_symbol("▼")
-                    .set_style(indicator_style);
-            }
+        // Render scrollbar on the right border
+        if let Some(border_x) = ctx.border_right_x {
+            let theme_colors = termide_core::ThemeColors::from(&self.cached_theme);
+            ScrollBar::render(
+                buf,
+                border_x,
+                area.y,
+                area.height,
+                self.scroll_offset,
+                content_height,
+                self.entries.len(),
+                &theme_colors,
+                ctx.is_focused,
+            );
         }
     }
 

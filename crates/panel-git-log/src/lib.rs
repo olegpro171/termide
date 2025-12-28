@@ -13,6 +13,7 @@ use termide_config::Config;
 use termide_core::{Panel, PanelEvent, RenderContext, SessionPanel, ThemeColors};
 use termide_git::{self as git, CommitInfo};
 use termide_theme::Theme;
+use termide_ui::ScrollBar;
 
 /// Section of the Git Log panel
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,7 +267,13 @@ impl GitLogPanel {
     }
 
     /// Render the panel content
-    fn render_content(&self, area: Rect, buf: &mut Buffer) {
+    fn render_content(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        is_focused: bool,
+        border_right_x: Option<u16>,
+    ) {
         if area.height < 3 || area.width < 10 {
             return;
         }
@@ -297,6 +304,10 @@ impl GitLogPanel {
         let commits_area_height = content_area.height.saturating_sub(y_offset) as usize;
         let commits_start_y = content_area.y + y_offset;
 
+        // Check if scrollbar is needed (will be rendered on border, so no width reservation)
+        let needs_scrollbar = ScrollBar::needs_scrollbar(commits_area_height, self.commits.len());
+        let commits_width = content_area.width;
+
         // Render commits
         for (i, commit) in self
             .commits
@@ -314,7 +325,7 @@ impl GitLogPanel {
             } else {
                 Style::default().bg(theme.bg)
             };
-            for x in content_area.x..content_area.x + content_area.width {
+            for x in content_area.x..content_area.x + commits_width {
                 if let Some(cell) = buf.cell_mut((x, y)) {
                     cell.set_char(' ');
                     cell.set_style(clear_style);
@@ -322,7 +333,7 @@ impl GitLogPanel {
             }
 
             let mut x_pos = content_area.x;
-            let max_x = content_area.x + content_area.width;
+            let max_x = content_area.x + commits_width;
 
             // Graph prefix (if available)
             if let Some(ref graph) = commit.graph {
@@ -402,6 +413,23 @@ impl GitLogPanel {
                     };
                     buf.set_string(x_pos, y, &message, msg_style);
                 }
+            }
+        }
+
+        // Render scrollbar on border
+        if needs_scrollbar {
+            if let Some(border_x) = border_right_x {
+                ScrollBar::render(
+                    buf,
+                    border_x,
+                    commits_start_y,
+                    commits_area_height as u16,
+                    self.scroll,
+                    commits_area_height,
+                    self.commits.len(),
+                    theme,
+                    is_focused,
+                );
             }
         }
 
@@ -580,9 +608,9 @@ impl Panel for GitLogPanel {
         self.cached_theme = ThemeColors::from(theme);
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _ctx: &RenderContext) {
+    fn render(&mut self, area: Rect, buf: &mut Buffer, ctx: &RenderContext) {
         self.last_area = area;
-        self.render_content(area, buf);
+        self.render_content(area, buf, ctx.is_focused, ctx.border_right_x);
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Vec<PanelEvent> {

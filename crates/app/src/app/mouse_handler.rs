@@ -29,16 +29,6 @@ impl App {
             }
         }
 
-        // Scroll events should reach panels even when modal is active
-        // This allows scrolling terminal history while input modal is open
-        if matches!(
-            mouse.kind,
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        ) {
-            self.forward_scroll_to_panel_at_cursor(mouse)?;
-            return Ok(());
-        }
-
         // Handle modal mouse events first if a modal is open
         if self.state.active_modal.is_some() {
             let modal_area = Rect {
@@ -48,6 +38,16 @@ impl App {
                 height: self.state.terminal.height,
             };
             self.handle_modal_mouse(mouse, modal_area)?;
+            return Ok(());
+        }
+
+        // Scroll events should reach panels when no modal is active
+        // This allows scrolling terminal history, editor, etc.
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) {
+            self.forward_scroll_to_panel_at_cursor(mouse)?;
             return Ok(());
         }
 

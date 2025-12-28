@@ -59,6 +59,8 @@ pub struct RenderContext<'a> {
     pub terminal_width: u16,
     /// Terminal height
     pub terminal_height: u16,
+    /// X position of right border (for scrollbar rendering on border)
+    pub border_right_x: Option<u16>,
 }
 
 /// Minimal theme colors needed for rendering.
