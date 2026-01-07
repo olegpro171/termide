@@ -1,13 +1,5 @@
 use crate::Cursor;
 
-/// Search direction
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchDirection {
-    Forward,
-    #[allow(dead_code)]
-    Backward,
-}
-
 /// Search state in editor
 #[derive(Debug, Clone)]
 pub struct SearchState {
@@ -21,9 +13,6 @@ pub struct SearchState {
     pub matches: Vec<Cursor>,
     /// Case sensitivity
     pub case_sensitive: bool,
-    /// Search direction
-    #[allow(dead_code)]
-    pub direction: SearchDirection,
 }
 
 impl SearchState {
@@ -35,7 +24,6 @@ impl SearchState {
             current_match: None,
             matches: Vec::new(),
             case_sensitive,
-            direction: SearchDirection::Forward,
         }
     }
 
@@ -47,7 +35,6 @@ impl SearchState {
             current_match: None,
             matches: Vec::new(),
             case_sensitive,
-            direction: SearchDirection::Forward,
         }
     }
 

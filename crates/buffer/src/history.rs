@@ -7,9 +7,6 @@ pub enum Action {
     Insert { position: Cursor, text: String },
     /// Text deletion
     Delete { position: Cursor, text: String },
-    /// Action group (for merging consecutive insertions)
-    #[allow(dead_code)]
-    Group { actions: Vec<Action> },
 }
 
 impl Action {
@@ -23,9 +20,6 @@ impl Action {
             Action::Delete { position, text } => Action::Insert {
                 position: *position,
                 text: text.clone(),
-            },
-            Action::Group { actions } => Action::Group {
-                actions: actions.iter().rev().map(|a| a.inverse()).collect(),
             },
         }
     }

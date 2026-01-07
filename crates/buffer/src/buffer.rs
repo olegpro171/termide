@@ -411,13 +411,6 @@ impl TextBuffer {
                 self.rope.remove(char_idx..end_idx);
                 Ok(*position)
             }
-            Action::Group { actions } => {
-                let mut cursor = Cursor::new();
-                for action in actions {
-                    cursor = self.apply_action(action)?;
-                }
-                Ok(cursor)
-            }
         }
     }
 }
