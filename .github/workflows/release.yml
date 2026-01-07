@@ -240,13 +240,14 @@ jobs:
           sed -i "s/sha256sums=.*/sha256sums=('${SRC_SHA}')/" PKGBUILD
 
           # Generate .SRCINFO using Docker (run as non-root user)
+          OWNER=$(stat -c %u:%g .)
           docker run --rm -v "$PWD:/pkg" archlinux:base bash -c "
             pacman -Sy --noconfirm pacman-contrib sudo fakeroot
             useradd -m builder
-            chown builder:builder /pkg/PKGBUILD
+            chown -R builder:builder /pkg
             cd /pkg && sudo -u builder makepkg --printsrcinfo > .SRCINFO
-            chown $(stat -c %u:%g /pkg/.git) /pkg/.SRCINFO
           "
+          sudo chown -R $OWNER .
 
           git config user.email "github-actions@termide.dev"
           git config user.name "GitHub Actions"
@@ -266,13 +267,14 @@ jobs:
           sed -i "s/sha256sums_aarch64=.*/sha256sums_aarch64=('${BIN_ARM_SHA}')/" PKGBUILD
 
           # Generate .SRCINFO using Docker (run as non-root user)
+          OWNER=$(stat -c %u:%g .)
           docker run --rm -v "$PWD:/pkg" archlinux:base bash -c "
             pacman -Sy --noconfirm pacman-contrib sudo fakeroot
             useradd -m builder
-            chown builder:builder /pkg/PKGBUILD
+            chown -R builder:builder /pkg
             cd /pkg && sudo -u builder makepkg --printsrcinfo > .SRCINFO
-            chown $(stat -c %u:%g /pkg/.git) /pkg/.SRCINFO
           "
+          sudo chown -R $OWNER .
 
           git config user.email "github-actions@termide.dev"
           git config user.name "GitHub Actions"
