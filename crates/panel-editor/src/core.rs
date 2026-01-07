@@ -1497,36 +1497,34 @@ impl Editor {
 
     /// Replace all matches
     pub fn replace_all(&mut self) -> Result<usize> {
-        let count = if let Some(ref search_state) = self.search.state.clone() {
-            if let Some(replace_with) = &search_state.replace_with {
-                // Perform all replacements
-                let count = search::replace_all_matches(
-                    &mut self.buffer,
-                    &search_state.matches,
-                    search_state.query.len(),
-                    replace_with,
-                )?;
-
-                // Invalidate highlighting cache for all affected lines
-                for match_cursor in &search_state.matches {
-                    self.render_cache
-                        .highlight
-                        .invalidate_line(match_cursor.line);
-                }
-
-                // Clear search state
-                self.search.state = None;
-
-                // Schedule git diff update
-                self.schedule_git_diff_update();
-
-                count
-            } else {
-                0
-            }
-        } else {
-            0
+        // Use take() instead of clone() to avoid allocation
+        let Some(search_state) = self.search.state.take() else {
+            return Ok(0);
         };
+
+        let Some(replace_with) = &search_state.replace_with else {
+            // Restore state if no replace_with
+            self.search.state = Some(search_state);
+            return Ok(0);
+        };
+
+        // Perform all replacements
+        let count = search::replace_all_matches(
+            &mut self.buffer,
+            &search_state.matches,
+            search_state.query.len(),
+            replace_with,
+        )?;
+
+        // Invalidate highlighting cache for all affected lines
+        for match_cursor in &search_state.matches {
+            self.render_cache
+                .highlight
+                .invalidate_line(match_cursor.line);
+        }
+
+        // Schedule git diff update
+        self.schedule_git_diff_update();
 
         Ok(count)
     }

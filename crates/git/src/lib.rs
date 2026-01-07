@@ -962,20 +962,26 @@ pub fn find_repos_from_paths(paths: &[PathBuf], submodule_depth: usize) -> Vec<P
 
 /// Remove paths that are nested inside other paths.
 /// E.g., ["/repo", "/repo/src", "/repo/src/lib"] -> ["/repo"]
+///
+/// Optimized from O(n²) to O(n log n) by leveraging sorted order:
+/// after sorting, a parent path always comes before its children,
+/// so we only need to check against the last added path.
 fn remove_nested_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
     if paths.is_empty() {
         return Vec::new();
     }
 
-    let mut result = Vec::new();
     let mut sorted = paths.to_vec();
     sorted.sort();
 
+    let mut result = Vec::with_capacity(sorted.len());
+
     for path in sorted {
-        // Check if this path is a child of any already-added path
+        // After sorting, parent always comes before child.
+        // So we only need to check if current path is nested under the last added path.
         let is_nested = result
-            .iter()
-            .any(|existing: &PathBuf| path.starts_with(existing));
+            .last()
+            .is_some_and(|last: &PathBuf| path.starts_with(last));
         if !is_nested {
             result.push(path);
         }
