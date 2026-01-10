@@ -551,6 +551,9 @@ impl Terminal {
     }
 
     /// Paste text from clipboard to PTY with bracketed paste mode support
+    ///
+    /// All paste data is sent in a single atomic write to prevent issues with
+    /// TUI applications that may struggle with multiple rapid flushes.
     pub fn paste_from_clipboard(&mut self) -> Result<()> {
         // Get text from clipboard
         let Some(text) = termide_ui::clipboard::paste() else {
@@ -564,17 +567,20 @@ impl Terminal {
             .expect("Terminal screen lock poisoned")
             .bracketed_paste_mode;
 
+        // Build complete paste buffer for atomic write
+        let mut buffer = Vec::with_capacity(text.len() + 14); // +14 for escape sequences
+
         if bracketed_paste {
-            // Send bracketed paste start sequence
-            self.send_input(b"\x1b[200~")?;
-            // Send the actual text
-            self.send_input(text.as_bytes())?;
-            // Send bracketed paste end sequence
-            self.send_input(b"\x1b[201~")?;
-        } else {
-            // Send text as-is without bracketing
-            self.send_input(text.as_bytes())?;
+            buffer.extend_from_slice(b"\x1b[200~");
         }
+        buffer.extend_from_slice(text.as_bytes());
+        if bracketed_paste {
+            buffer.extend_from_slice(b"\x1b[201~");
+        }
+
+        // Single atomic write - let OS handle buffering
+        // Explicit flush can cause issues with some TUI apps
+        self.writer.write_all(&buffer)?;
 
         Ok(())
     }
