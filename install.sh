@@ -181,7 +181,7 @@ main() {
     show_menu
 
     printf "Select installation method [1]: "
-    read -r CHOICE
+    read -r CHOICE </dev/tty
     CHOICE="${CHOICE:-1}"
 
     if [ "$CHOICE" = "0" ]; then
