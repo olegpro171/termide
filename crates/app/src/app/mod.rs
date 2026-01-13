@@ -134,7 +134,10 @@ impl App {
         &mut self,
         terminal: &mut Terminal<B>,
         render_fn: impl Fn(&mut ratatui::Frame<'_>, &mut AppState, &mut LayoutManager),
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        B::Error: Send + Sync + 'static,
+    {
         // Initialize terminal dimensions
         let size = terminal.size()?;
         self.state.update_terminal_size(size.width, size.height);
