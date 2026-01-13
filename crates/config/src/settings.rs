@@ -297,3 +297,17 @@ impl Default for LoggingSettings {
         }
     }
 }
+
+impl Config {
+    /// Fill all None keybinding values with their defaults.
+    ///
+    /// This ensures that when serializing to TOML, all keybindings
+    /// are written with their values (either user-configured or defaults).
+    pub fn normalize(&mut self) {
+        self.general.keybindings.with_defaults();
+        self.editor.keybindings.with_defaults();
+        self.file_manager.keybindings.with_defaults();
+        self.git_status.keybindings.with_defaults();
+        self.terminal.keybindings.with_defaults();
+    }
+}

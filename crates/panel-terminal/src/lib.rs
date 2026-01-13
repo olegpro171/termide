@@ -553,37 +553,102 @@ impl Terminal {
         Ok(())
     }
 
-    /// Paste text from clipboard to PTY with bracketed paste mode support
+    /// Paste text from clipboard to PTY with bracketed paste mode support.
     ///
-    /// All paste data is sent in a single atomic write to prevent issues with
-    /// TUI applications that may struggle with multiple rapid flushes.
+    /// - Small pastes (≤500 bytes): single atomic write (fast, standard)
+    /// - Large pastes (>500 bytes): chunked with delays (safer for TUI apps)
     pub fn paste_from_clipboard(&mut self) -> Result<()> {
-        // Get text from clipboard
         let Some(text) = termide_ui::clipboard::paste() else {
             return Ok(());
         };
 
-        // Check if bracketed paste mode is enabled
+        if text.is_empty() {
+            return Ok(());
+        }
+
         let bracketed_paste = self
             .screen
             .read()
             .expect("Terminal screen lock poisoned")
             .bracketed_paste_mode;
 
-        // Build complete paste buffer for atomic write
-        let mut buffer = Vec::with_capacity(text.len() + 14); // +14 for escape sequences
+        // Small pastes: single atomic write (standard behavior)
+        if text.len() <= 500 {
+            return self.paste_atomic(&text, bracketed_paste);
+        }
 
-        if bracketed_paste {
+        // Large pastes: chunked with moderate delays
+        self.paste_chunked(&text, bracketed_paste)
+    }
+
+    /// Send paste data as a single atomic write with optional bracketed paste.
+    fn paste_atomic(&mut self, text: &str, bracketed: bool) -> Result<()> {
+        let mut buffer = Vec::with_capacity(text.len() + 14);
+
+        if bracketed {
             buffer.extend_from_slice(b"\x1b[200~");
         }
         buffer.extend_from_slice(text.as_bytes());
-        if bracketed_paste {
+        if bracketed {
             buffer.extend_from_slice(b"\x1b[201~");
         }
 
-        // Single atomic write - let OS handle buffering
-        // Explicit flush can cause issues with some TUI apps
         self.writer.write_all(&buffer)?;
+        self.writer.flush()?;
+
+        Ok(())
+    }
+
+    /// Send paste data in byte chunks with delays for large pastes.
+    ///
+    /// Uses bracketed paste mode with chunked content to balance
+    /// compatibility and performance.
+    fn paste_chunked(&mut self, text: &str, bracketed: bool) -> Result<()> {
+        use std::time::Duration;
+
+        const CHUNK_SIZE: usize = 200;
+        const CHUNK_DELAY_MS: u64 = 20;
+
+        let bytes = text.as_bytes();
+        let mut pos = 0;
+
+        // Start marker
+        if bracketed {
+            self.writer.write_all(b"\x1b[200~")?;
+            self.writer.flush()?;
+        }
+
+        while pos < bytes.len() {
+            // Calculate chunk end, respecting UTF-8 boundaries
+            let mut end = (pos + CHUNK_SIZE).min(bytes.len());
+
+            // Don't split UTF-8 multi-byte sequences
+            while end < bytes.len() && end > pos {
+                if bytes[end] & 0xC0 != 0x80 {
+                    break;
+                }
+                end -= 1;
+            }
+
+            if end == pos && pos < bytes.len() {
+                end = (pos + CHUNK_SIZE).min(bytes.len());
+            }
+
+            self.writer.write_all(&bytes[pos..end])?;
+            self.writer.flush()?;
+
+            pos = end;
+
+            if pos < bytes.len() {
+                std::thread::sleep(Duration::from_millis(CHUNK_DELAY_MS));
+            }
+        }
+
+        // End marker
+        if bracketed {
+            self.writer.write_all(b"\x1b[201~")?;
+            self.writer.flush()?;
+        }
 
         Ok(())
     }

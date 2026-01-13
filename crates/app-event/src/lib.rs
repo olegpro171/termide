@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use termide_app_core::{AppCommand, Direction, PanelType};
-use termide_config::{GlobalKeybindings, KeyBinding as ConfigKeyBinding};
+use termide_config::{latin_to_cyrillic, GlobalKeybindings, KeyBinding as ConfigKeyBinding};
 
 // ============================================================================
 // Key Binding Types
@@ -343,21 +343,13 @@ impl DefaultHotkeyProcessor {
             HotkeyAction::OpenSessions,
         );
 
-        // Git Status panel (Alt+G or Alt+п for Cyrillic layout)
+        // Git Status panel
         bindings.insert(
             KeyBinding::alt(KeyCode::Char('g')),
             HotkeyAction::OpenGitStatus,
         );
         bindings.insert(
             KeyBinding::alt(KeyCode::Char('G')),
-            HotkeyAction::OpenGitStatus,
-        );
-        bindings.insert(
-            KeyBinding::alt(KeyCode::Char('п')),
-            HotkeyAction::OpenGitStatus,
-        );
-        bindings.insert(
-            KeyBinding::alt(KeyCode::Char('П')),
             HotkeyAction::OpenGitStatus,
         );
 
@@ -406,7 +398,8 @@ impl DefaultHotkeyProcessor {
     pub fn from_config(config: &GlobalKeybindings) -> Self {
         let mut processor = Self::new();
 
-        // Helper to add binding from config or keep default
+        // Helper to add binding from config or keep default.
+        // Also auto-generates Cyrillic variants for Latin character bindings.
         let add_binding =
             |processor: &mut Self, binding: &Option<ConfigKeyBinding>, action: HotkeyAction| {
                 if let Some(kb) = binding {
@@ -418,6 +411,41 @@ impl DefaultHotkeyProcessor {
                             KeyBinding::new(parsed.key, parsed.modifiers),
                             action.clone(),
                         );
+
+                        // Add opposite case for letter keys (both 'm' and 'M' should work)
+                        if let KeyCode::Char(c) = parsed.key {
+                            if c.is_ascii_alphabetic() {
+                                let opposite = if c.is_ascii_lowercase() {
+                                    c.to_ascii_uppercase()
+                                } else {
+                                    c.to_ascii_lowercase()
+                                };
+                                processor.bindings.insert(
+                                    KeyBinding::new(KeyCode::Char(opposite), parsed.modifiers),
+                                    action.clone(),
+                                );
+                            }
+                        }
+
+                        // Auto-generate Cyrillic variant for Latin character bindings
+                        if let KeyCode::Char(c) = parsed.key {
+                            if let Some(cyrillic) = latin_to_cyrillic(c) {
+                                // Add lowercase Cyrillic
+                                processor.bindings.insert(
+                                    KeyBinding::new(KeyCode::Char(cyrillic), parsed.modifiers),
+                                    action.clone(),
+                                );
+                                // Add uppercase Cyrillic
+                                if let Some(upper) = cyrillic.to_uppercase().next() {
+                                    if upper != cyrillic {
+                                        processor.bindings.insert(
+                                            KeyBinding::new(KeyCode::Char(upper), parsed.modifiers),
+                                            action.clone(),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             };

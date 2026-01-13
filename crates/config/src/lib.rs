@@ -9,9 +9,9 @@ mod settings;
 mod xdg;
 
 pub use keybindings::{
-    matches_binding_or_default, matches_binding_or_defaults, parse_keybinding, EditorKeybindings,
-    FileManagerKeybindings, GitStatusKeybindings, GlobalKeybindings, KeyBinding, ParsedKeyBinding,
-    TerminalKeybindings,
+    latin_to_cyrillic, matches_binding_or_default, matches_binding_or_defaults, parse_keybinding,
+    EditorKeybindings, FileManagerKeybindings, GitStatusKeybindings, GlobalKeybindings, KeyBinding,
+    ParsedKeyBinding, TerminalKeybindings,
 };
 pub use settings::{
     Config, EditorSettings, FileManagerSettings, GeneralSettings, GitStatusSettings, LegacyConfig,
@@ -52,17 +52,21 @@ impl Config {
             let original_content = std::fs::read_to_string(&config_path)?;
 
             // Try parsing as new structured format first
-            let config: Self = match toml::from_str(&original_content) {
+            let mut config: Self = match toml::from_str(&original_content) {
                 Ok(config) => config,
                 Err(_) => {
                     // Try parsing as legacy flat format
                     let legacy: LegacyConfig = toml::from_str(&original_content)?;
-                    let config: Config = legacy.into();
-                    // Save in new format
+                    let mut config: Config = legacy.into();
+                    // Normalize keybindings before saving
+                    config.normalize();
                     config.save()?;
                     return Ok(config);
                 }
             };
+
+            // Fill None keybinding values with defaults
+            config.normalize();
 
             // Serialize back to get normalized content
             let normalized_content = toml::to_string_pretty(&config)?;
@@ -75,7 +79,9 @@ impl Config {
             Ok(config)
         } else {
             // First run - create config file with default values
-            let config = Self::default();
+            let mut config = Self::default();
+            // Fill all keybindings with defaults
+            config.normalize();
             config.save()?;
 
             // Create themes directory

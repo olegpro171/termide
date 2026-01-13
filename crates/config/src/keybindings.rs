@@ -283,6 +283,206 @@ pub struct TerminalKeybindings {
 }
 
 // =============================================================================
+// Default value implementations for config normalization
+// =============================================================================
+
+impl GlobalKeybindings {
+    /// Fill None values with default keybindings
+    pub fn with_defaults(&mut self) {
+        macro_rules! set_default {
+            ($field:ident, $default:expr) => {
+                if self.$field.is_none() {
+                    self.$field = Some(KeyBinding::Single($default.into()));
+                }
+            };
+        }
+
+        // Menu & UI
+        set_default!(toggle_menu, "Alt+M");
+
+        // Panel creation
+        set_default!(new_file_manager, "Alt+F");
+        set_default!(new_terminal, "Alt+T");
+        set_default!(new_editor, "Alt+E");
+        set_default!(new_log_panel, "Alt+L");
+        set_default!(open_help, "Alt+H");
+        set_default!(open_preferences, "Alt+P");
+        set_default!(open_sessions, "Alt+/");
+        set_default!(open_git_status, "Alt+G");
+
+        // Panel management
+        set_default!(close_panel, "Alt+X");
+        set_default!(toggle_stack, "Alt+Backspace");
+        set_default!(swap_left, "Alt+PageUp");
+        set_default!(swap_right, "Alt+PageDown");
+        set_default!(move_first, "Alt+Home");
+        set_default!(move_last, "Alt+End");
+        set_default!(resize_smaller, "Alt+-");
+        set_default!(resize_larger, "Alt+=");
+
+        // Navigation (with WASD alternatives)
+        macro_rules! set_default_multiple {
+            ($field:ident, $($default:expr),+) => {
+                if self.$field.is_none() {
+                    self.$field = Some(KeyBinding::Multiple(vec![$($default.into()),+]));
+                }
+            };
+        }
+
+        set_default_multiple!(prev_group, "Alt+Left", "Alt+A");
+        set_default_multiple!(next_group, "Alt+Right", "Alt+D");
+        set_default_multiple!(prev_panel, "Alt+Up", "Alt+W");
+        set_default_multiple!(next_panel, "Alt+Down", "Alt+S");
+        set_default!(goto_panel_1, "Alt+1");
+        set_default!(goto_panel_2, "Alt+2");
+        set_default!(goto_panel_3, "Alt+3");
+        set_default!(goto_panel_4, "Alt+4");
+        set_default!(goto_panel_5, "Alt+5");
+        set_default!(goto_panel_6, "Alt+6");
+        set_default!(goto_panel_7, "Alt+7");
+        set_default!(goto_panel_8, "Alt+8");
+        set_default!(goto_panel_9, "Alt+9");
+
+        // Application
+        set_default!(quit, "Alt+Q");
+    }
+}
+
+impl EditorKeybindings {
+    /// Fill None values with default keybindings
+    pub fn with_defaults(&mut self) {
+        macro_rules! set_default {
+            ($field:ident, $default:expr) => {
+                if self.$field.is_none() {
+                    self.$field = Some(KeyBinding::Single($default.into()));
+                }
+            };
+        }
+
+        // File operations
+        set_default!(save, "Ctrl+S");
+        set_default!(force_save, "Ctrl+Shift+S");
+        set_default!(reload, "Ctrl+Shift+R");
+
+        // Undo/Redo
+        set_default!(undo, "Ctrl+Z");
+        set_default!(redo, "Ctrl+Y");
+
+        // Clipboard
+        set_default!(copy, "Ctrl+C");
+        set_default!(cut, "Ctrl+X");
+        set_default!(paste, "Ctrl+V");
+
+        // Selection
+        set_default!(select_all, "Ctrl+A");
+
+        // Editing
+        set_default!(duplicate_line, "Ctrl+D");
+
+        // Search & Replace
+        set_default!(search, "Ctrl+F");
+        set_default!(search_next, "F3");
+        set_default!(search_prev, "Shift+F3");
+        set_default!(replace, "Ctrl+H");
+        set_default!(replace_current, "Ctrl+R");
+        set_default!(replace_all, "Ctrl+Alt+R");
+    }
+}
+
+impl FileManagerKeybindings {
+    /// Fill None values with default keybindings
+    pub fn with_defaults(&mut self) {
+        macro_rules! set_default_single {
+            ($field:ident, $default:expr) => {
+                if self.$field.is_none() {
+                    self.$field = Some(KeyBinding::Single($default.into()));
+                }
+            };
+        }
+
+        macro_rules! set_default_multiple {
+            ($field:ident, $($default:expr),+) => {
+                if self.$field.is_none() {
+                    self.$field = Some(KeyBinding::Multiple(vec![$($default.into()),+]));
+                }
+            };
+        }
+
+        // File operations (multiple bindings)
+        set_default_multiple!(copy_files, "C", "F5");
+        set_default_multiple!(move_files, "M", "F6");
+        set_default_multiple!(delete_files, "Delete", "F8");
+        set_default_single!(view_file, "F3");
+        set_default_single!(edit_file, "F4");
+        set_default_single!(new_file, "Ctrl+N");
+        set_default_multiple!(new_directory, "D", "F7");
+
+        // Search
+        set_default_single!(search_files, "Ctrl+F");
+        set_default_single!(search_content, "Ctrl+Shift+F");
+
+        // Navigation
+        set_default_single!(go_home, "~");
+        set_default_single!(go_parent, "Backspace");
+        set_default_single!(refresh, "Ctrl+R");
+
+        // Selection
+        set_default_single!(toggle_selection, "Insert");
+        set_default_single!(select_all, "Ctrl+A");
+
+        // Other
+        set_default_single!(open_external, "Shift+Enter");
+    }
+}
+
+impl GitStatusKeybindings {
+    /// Fill None values with default keybindings
+    pub fn with_defaults(&mut self) {
+        macro_rules! set_default_multiple {
+            ($field:ident, $($default:expr),+) => {
+                if self.$field.is_none() {
+                    self.$field = Some(KeyBinding::Multiple(vec![$($default.into()),+]));
+                }
+            };
+        }
+
+        macro_rules! set_default_single {
+            ($field:ident, $default:expr) => {
+                if self.$field.is_none() {
+                    self.$field = Some(KeyBinding::Single($default.into()));
+                }
+            };
+        }
+
+        set_default_multiple!(stage_file, "Insert", "Ctrl+S");
+        set_default_multiple!(unstage_file, "Delete", "Ctrl+U");
+        set_default_single!(refresh, "Ctrl+R");
+        set_default_single!(next_section, "Tab");
+        set_default_single!(prev_section, "Shift+Tab");
+    }
+}
+
+impl TerminalKeybindings {
+    /// Fill None values with default keybindings
+    pub fn with_defaults(&mut self) {
+        macro_rules! set_default {
+            ($field:ident, $default:expr) => {
+                if self.$field.is_none() {
+                    self.$field = Some(KeyBinding::Single($default.into()));
+                }
+            };
+        }
+
+        set_default!(copy, "Ctrl+Shift+C");
+        set_default!(paste, "Ctrl+Shift+V");
+        set_default!(scroll_up, "Shift+PageUp");
+        set_default!(scroll_down, "Shift+PageDown");
+        set_default!(scroll_top, "Shift+Home");
+        set_default!(scroll_bottom, "Shift+End");
+    }
+}
+
+// =============================================================================
 // Helper macros and functions for matching keybindings
 // =============================================================================
 
@@ -320,6 +520,53 @@ pub fn matches_binding_or_defaults(
             };
             default.matches(event)
         })
+    }
+}
+
+// =============================================================================
+// Latin to Cyrillic mapping for keyboard layout support
+// =============================================================================
+
+/// Map Latin character to Cyrillic equivalent (QWERTY → ЙЦУКЕН layout).
+///
+/// This allows hotkeys to work regardless of the current keyboard layout.
+/// For example, Alt+M will also work as Alt+Ь when in Russian layout.
+pub fn latin_to_cyrillic(c: char) -> Option<char> {
+    match c.to_ascii_lowercase() {
+        'a' => Some('ф'),
+        'b' => Some('и'),
+        'c' => Some('с'),
+        'd' => Some('в'),
+        'e' => Some('у'),
+        'f' => Some('а'),
+        'g' => Some('п'),
+        'h' => Some('р'),
+        'i' => Some('ш'),
+        'j' => Some('о'),
+        'k' => Some('л'),
+        'l' => Some('д'),
+        'm' => Some('ь'),
+        'n' => Some('т'),
+        'o' => Some('щ'),
+        'p' => Some('з'),
+        'q' => Some('й'),
+        'r' => Some('к'),
+        's' => Some('ы'),
+        't' => Some('е'),
+        'u' => Some('г'),
+        'v' => Some('м'),
+        'w' => Some('ц'),
+        'x' => Some('ч'),
+        'y' => Some('н'),
+        'z' => Some('я'),
+        '[' => Some('х'),
+        ']' => Some('ъ'),
+        ';' => Some('ж'),
+        '\'' => Some('э'),
+        ',' => Some('б'),
+        '.' => Some('ю'),
+        '/' => Some('.'),
+        _ => None,
     }
 }
 
@@ -432,5 +679,26 @@ mod tests {
         assert!(kb.matches(&event_c));
         assert!(kb.matches(&event_f5));
         assert!(!kb.matches(&event_d));
+    }
+
+    #[test]
+    fn test_latin_to_cyrillic() {
+        // Common keys used in hotkeys
+        assert_eq!(latin_to_cyrillic('m'), Some('ь'));
+        assert_eq!(latin_to_cyrillic('M'), Some('ь')); // uppercase input → lowercase cyrillic
+        assert_eq!(latin_to_cyrillic('f'), Some('а'));
+        assert_eq!(latin_to_cyrillic('t'), Some('е'));
+        assert_eq!(latin_to_cyrillic('g'), Some('п'));
+        assert_eq!(latin_to_cyrillic('q'), Some('й'));
+
+        // WASD keys
+        assert_eq!(latin_to_cyrillic('w'), Some('ц'));
+        assert_eq!(latin_to_cyrillic('a'), Some('ф'));
+        assert_eq!(latin_to_cyrillic('s'), Some('ы'));
+        assert_eq!(latin_to_cyrillic('d'), Some('в'));
+
+        // Non-letter keys
+        assert_eq!(latin_to_cyrillic('1'), None);
+        assert_eq!(latin_to_cyrillic('-'), None);
     }
 }

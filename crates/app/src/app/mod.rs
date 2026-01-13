@@ -98,6 +98,10 @@ impl App {
             termide_logger::warn(format!("Failed to cleanup old sessions: {}", e));
         }
 
+        // Create hotkey processor from config before moving state
+        let hotkey_processor =
+            DefaultHotkeyProcessor::from_config(&state.config.general.keybindings);
+
         Self {
             state,
             layout_manager: LayoutManager::new(),
@@ -105,7 +109,7 @@ impl App {
                 termide_config::constants::EVENT_HANDLER_INTERVAL_MS,
             )),
             project_root,
-            hotkey_processor: DefaultHotkeyProcessor::new(),
+            hotkey_processor,
         }
     }
 
