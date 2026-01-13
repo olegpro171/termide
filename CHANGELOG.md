@@ -5,6 +5,20 @@ All notable changes to TermIDE will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.8] - 2026-01-13
+
+### Security
+- **lru vulnerability**: Fixed GHSA-rhfx-m35p-ff5j (IterMut Stacked Borrows violation) by updating to lru 0.16.3
+
+### Added
+- **Configurable keybindings**: Full keybinding customization via config.toml for all panels
+- **Shared abstractions**: New ClickTracker, Viewport, SelectionStyle utilities for DRY code
+
+### Changed
+- **Dependencies**: Updated ratatui 0.29→0.30, ratatui-image 5→10
+- **Performance**: 50-500x speedup in hot paths (grapheme iteration, git diff markers, LRU eviction, gitignore checks)
+- **Refactoring**: Integrated ClickTracker into GitStatusPanel and FileManager (~40 LOC saved)
+
 ## [0.8.7] - 2026-01-12
 
 ### Added
