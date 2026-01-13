@@ -31,7 +31,7 @@ use termide_git::{get_git_status_async, GitStatus, GitStatusAsyncResult, GitStat
 use termide_modal::{ActiveModal, ConfirmModal, ContentSearchModal, FileSearchModal, InputModal};
 use termide_state::{DirSizeResult, PendingAction};
 use termide_theme::Theme;
-use termide_ui::{clipboard, path_utils, ScrollBar};
+use termide_ui::{clipboard, path_utils, IndexClickTracker, ScrollBar};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum DragMode {
@@ -51,10 +51,8 @@ pub struct FileManager {
     modal_request: Option<(PendingAction, ActiveModal)>,
     /// Visible area height (updated during rendering)
     visible_height: usize,
-    /// Time of last click for double-click detection
-    last_click_time: Option<std::time::Instant>,
-    /// Index of element that was last clicked
-    last_click_index: Option<usize>,
+    /// Click tracker for double-click detection
+    click_tracker: IndexClickTracker,
     /// Set of selected items (indices)
     selected_items: HashSet<usize>,
     /// Git status cache for the current directory
@@ -116,8 +114,7 @@ impl FileManager {
             display_title,
             modal_request: None,
             visible_height: 10, // Default value, will be updated during rendering
-            last_click_time: None,
-            last_click_index: None,
+            click_tracker: IndexClickTracker::new(),
             selected_items: HashSet::new(),
             git_status_cache: None,
             git_status_receiver: None,
@@ -1228,26 +1225,15 @@ impl Panel for FileManager {
                         self.dragged_items.clear();
                         self.dragged_items.insert(clicked_index);
                     } else {
-                        // Check for double click
-                        let now = std::time::Instant::now();
-                        let is_double_click = if let (Some(last_time), Some(last_index)) =
-                            (self.last_click_time, self.last_click_index)
-                        {
-                            // Double click if less than DOUBLE_CLICK_INTERVAL_MS passed and clicked on same item
-                            now.duration_since(last_time).as_millis()
-                                < constants::DOUBLE_CLICK_INTERVAL_MS
-                                && last_index == clicked_index
-                        } else {
-                            false
-                        };
+                        // Check for double click using ClickTracker
+                        let is_double_click = self.click_tracker.is_double_click(&clicked_index);
 
                         if is_double_click {
                             // Double click - open file/directory
                             self.selected = clicked_index;
                             let event = self.enter();
                             // Reset click state
-                            self.last_click_time = None;
-                            self.last_click_index = None;
+                            self.click_tracker.reset();
                             // Return event if file was opened
                             if let Some(e) = event {
                                 return vec![e];
@@ -1255,9 +1241,8 @@ impl Panel for FileManager {
                         } else {
                             // Single click - select item
                             self.selected = clicked_index;
-                            // Save time and index for double-click detection
-                            self.last_click_time = Some(now);
-                            self.last_click_index = Some(clicked_index);
+                            // Record click for double-click detection
+                            self.click_tracker.record(clicked_index);
                         }
                         self.drag_start_index = None;
                         self.drag_mode = None;

@@ -25,7 +25,7 @@ use termide_git::{self as git, StagedFile, UnstagedFile};
 use termide_modal::{ActionButton, ActiveModal, InfoActionModal};
 use termide_state::PendingAction;
 use termide_theme::Theme;
-use termide_ui::ScrollBar;
+use termide_ui::{IndexClickTracker, ScrollBar};
 use termide_ui_render::InlineSelector;
 
 /// Section of the Git Status panel
@@ -132,11 +132,8 @@ pub struct GitStatusPanel {
     stage_all_btn_area: Option<Rect>,
     /// Unstage all button area (for mouse click detection)
     unstage_all_btn_area: Option<Rect>,
-    /// Time of last click for double-click detection
-    last_click_time: Option<std::time::Instant>,
-    /// Section and index of last click
-    last_click_section: Option<Section>,
-    last_click_index: Option<usize>,
+    /// Click tracker for double-click detection in files area
+    click_tracker: IndexClickTracker,
     /// Modal request (for file properties)
     modal_request: Option<(termide_state::PendingAction, termide_modal::ActiveModal)>,
     /// Loading indicator flag
@@ -179,9 +176,7 @@ impl GitStatusPanel {
             dropdown_scroll: 0,
             stage_all_btn_area: None,
             unstage_all_btn_area: None,
-            last_click_time: None,
-            last_click_section: None,
-            last_click_index: None,
+            click_tracker: IndexClickTracker::new(),
             modal_request: None,
             is_loading: false,
         };
@@ -222,9 +217,7 @@ impl GitStatusPanel {
             dropdown_scroll: 0,
             stage_all_btn_area: None,
             unstage_all_btn_area: None,
-            last_click_time: None,
-            last_click_section: None,
-            last_click_index: None,
+            click_tracker: IndexClickTracker::new(),
             modal_request: None,
             is_loading: false,
         };
@@ -741,32 +734,17 @@ impl GitStatusPanel {
 
     /// Check if current click is a double-click on the same item
     fn check_double_click(&self, now: std::time::Instant, vline: usize) -> bool {
-        if let (Some(last_time), Some(last_section), Some(last_idx)) = (
-            self.last_click_time,
-            self.last_click_section,
-            self.last_click_index,
-        ) {
-            now.duration_since(last_time).as_millis()
-                < termide_config::constants::DOUBLE_CLICK_INTERVAL_MS
-                && last_section == Section::Files
-                && last_idx == vline
-        } else {
-            false
-        }
+        self.click_tracker.is_double_click_at(now, &vline)
     }
 
     /// Reset double-click tracking state
     fn reset_click_state(&mut self) {
-        self.last_click_time = None;
-        self.last_click_section = None;
-        self.last_click_index = None;
+        self.click_tracker.reset();
     }
 
     /// Record click for double-click detection
     fn record_click(&mut self, now: std::time::Instant, vline: usize) {
-        self.last_click_time = Some(now);
-        self.last_click_section = Some(Section::Files);
-        self.last_click_index = Some(vline);
+        self.click_tracker.record_at(now, vline);
     }
 
     /// Get list of buttons that should be visible based on current state
