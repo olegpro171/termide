@@ -710,7 +710,7 @@ impl App {
         repo_path: PathBuf,
     ) -> Result<()> {
         use crate::state::{GitOperationHandle, GitOperationResult};
-        use std::process::Command;
+        use std::process::{Command, Stdio};
         use std::sync::mpsc;
         use std::thread;
 
@@ -726,10 +726,13 @@ impl App {
         };
         let cmd_str = cmd.to_string();
 
-        // Spawn the git process
+        // Spawn the git process with piped stdout/stderr to capture output
+        // and prevent it from corrupting the TUI
         let child = match Command::new("git")
             .arg(&cmd_str)
             .current_dir(&repo_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
         {
             Ok(child) => child,
