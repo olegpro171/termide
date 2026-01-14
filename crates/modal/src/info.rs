@@ -353,7 +353,7 @@ impl Modal for InfoModal {
         // Button is centered: "[ Close ]"
         let t = i18n::t();
         let button_text = format!("[ {} ]", t.ui_close());
-        let button_width = button_text.len() as u16;
+        let button_width = button_text.width() as u16;
 
         let start_col = button_area.x + (button_area.width.saturating_sub(button_width)) / 2;
         let end_col = start_col + button_width;

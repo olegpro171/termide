@@ -512,20 +512,28 @@ impl App {
                     t.git_pull_failed()
                 };
 
+                // Collect output lines (no labels, just plain text)
                 let mut lines = vec![];
-                if !result.stdout.trim().is_empty() {
-                    lines.push((t.git_output(), result.stdout.trim().to_string()));
+
+                // Add stdout lines
+                for line in result.stdout.lines() {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        lines.push((String::new(), trimmed.to_string()));
+                    }
                 }
-                if !result.stderr.trim().is_empty() {
-                    let label = if result.success {
-                        t.git_output()
-                    } else {
-                        t.git_error()
-                    };
-                    lines.push((label, result.stderr.trim().to_string()));
+
+                // Add stderr lines
+                for line in result.stderr.lines() {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        lines.push((String::new(), trimmed.to_string()));
+                    }
                 }
+
+                // Fallback if no output
                 if lines.is_empty() {
-                    lines.push((t.git_status_label(), t.git_completed()));
+                    lines.push((String::new(), t.git_completed().to_string()));
                 }
 
                 let modal = InfoModal::new(title, lines);
