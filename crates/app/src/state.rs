@@ -167,21 +167,13 @@ impl AppState {
         self.ui.menu_open = false;
         self.ui.selected_menu_item = None;
         self.ui.selected_dropdown_item = 0;
-        self.close_submenu();
-        self.close_sessions_submenu();
-        self.close_tools_submenu();
-        self.close_actions_submenu();
+        self.ui.close_all_submenus();
     }
 
     /// Open submenu (e.g., Preferences dropdown)
     pub fn open_submenu(&mut self) {
-        // Close other submenus first
-        self.ui.sessions_submenu.close();
-        self.ui.tools_submenu.close();
-        self.ui.actions_submenu.close();
-        // Open Options submenu
+        self.ui.close_all_submenus();
         self.ui.options_submenu.open();
-        self.ui.nested_submenu.close();
     }
 
     /// Close submenu and all nested menus
@@ -192,11 +184,7 @@ impl AppState {
 
     /// Open Sessions submenu
     pub fn open_sessions_submenu(&mut self) {
-        // Close other submenus first
-        self.ui.tools_submenu.close();
-        self.ui.options_submenu.close();
-        self.ui.actions_submenu.close();
-        // Open Sessions submenu
+        self.ui.close_all_submenus();
         self.ui.sessions_submenu.open();
     }
 
@@ -207,11 +195,7 @@ impl AppState {
 
     /// Open Tools submenu
     pub fn open_tools_submenu(&mut self) {
-        // Close other submenus first
-        self.ui.sessions_submenu.close();
-        self.ui.options_submenu.close();
-        self.ui.actions_submenu.close();
-        // Open Tools submenu
+        self.ui.close_all_submenus();
         self.ui.tools_submenu.open();
     }
 
@@ -222,13 +206,8 @@ impl AppState {
 
     /// Open Actions submenu
     pub fn open_actions_submenu(&mut self) {
-        // Close other submenus first
-        self.ui.sessions_submenu.close();
-        self.ui.tools_submenu.close();
-        self.ui.options_submenu.close();
-        // Open Actions submenu
+        self.ui.close_all_submenus();
         self.ui.actions_submenu.open();
-        self.ui.actions_nested.close();
     }
 
     /// Close Actions submenu

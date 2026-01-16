@@ -225,6 +225,20 @@ pub struct UiState {
     pub spinner_frame: usize,
 }
 
+impl UiState {
+    /// Close all main-level submenus (sessions, tools, options, actions)
+    /// and their nested submenus. Use before opening a specific submenu.
+    pub fn close_all_submenus(&mut self) {
+        self.sessions_submenu.close();
+        self.tools_submenu.close();
+        self.options_submenu.close();
+        self.nested_submenu.close();
+        self.actions_submenu.close();
+        self.actions_nested.close();
+        self.current_actions_group = None;
+    }
+}
+
 /// Terminal state (dimensions)
 #[derive(Debug, Clone, Copy)]
 pub struct TerminalState {
