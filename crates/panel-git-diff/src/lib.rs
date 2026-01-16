@@ -81,6 +81,8 @@ pub struct FileDiff {
 pub struct GitDiffPanel {
     /// Repository path
     repo_path: PathBuf,
+    /// Commit hash (None = working directory changes, Some = specific commit)
+    commit_hash: Option<String>,
     /// All file diffs
     diffs: Vec<FileDiff>,
     /// Vertical scroll offset (in lines)
@@ -102,10 +104,30 @@ pub struct GitDiffPanel {
 }
 
 impl GitDiffPanel {
-    /// Create a new Git Diff panel for a repository
+    /// Create a new Git Diff panel for working directory changes
     pub fn new(repo_path: PathBuf) -> Self {
         let mut panel = Self {
             repo_path,
+            commit_hash: None,
+            diffs: Vec::new(),
+            scroll: 0,
+            collapsed: HashSet::new(),
+            selected_file: 0,
+            cached_theme: ThemeColors::default(),
+            last_area: Rect::default(),
+            total_lines: 0,
+            visible_height: 0,
+            status_message: None,
+        };
+        panel.refresh();
+        panel
+    }
+
+    /// Create a new Git Diff panel for a specific commit
+    pub fn new_for_commit(repo_path: PathBuf, commit_hash: String) -> Self {
+        let mut panel = Self {
+            repo_path,
+            commit_hash: Some(commit_hash),
             diffs: Vec::new(),
             scroll: 0,
             collapsed: HashSet::new(),
@@ -124,19 +146,25 @@ impl GitDiffPanel {
     pub fn refresh(&mut self) {
         self.diffs.clear();
 
-        // Get unstaged files
-        let unstaged = git::get_unstaged_files(&self.repo_path);
-        for file in unstaged {
-            if let Some(diff) = self.load_file_diff(&file.path, false, file.status) {
-                self.diffs.push(diff);
+        if let Some(hash) = self.commit_hash.clone() {
+            // Load commit diff
+            self.load_commit_diff(&hash);
+        } else {
+            // Load working directory changes
+            // Get unstaged files
+            let unstaged = git::get_unstaged_files(&self.repo_path);
+            for file in unstaged {
+                if let Some(diff) = self.load_file_diff(&file.path, false, file.status) {
+                    self.diffs.push(diff);
+                }
             }
-        }
 
-        // Get staged files
-        let staged = git::get_staged_files(&self.repo_path);
-        for file in staged {
-            if let Some(diff) = self.load_file_diff(&file.path, true, file.status) {
-                self.diffs.push(diff);
+            // Get staged files
+            let staged = git::get_staged_files(&self.repo_path);
+            for file in staged {
+                if let Some(diff) = self.load_file_diff(&file.path, true, file.status) {
+                    self.diffs.push(diff);
+                }
             }
         }
 
@@ -146,6 +174,136 @@ impl GitDiffPanel {
         }
 
         self.calculate_total_lines();
+    }
+
+    /// Load diff for a specific commit
+    fn load_commit_diff(&mut self, hash: &str) {
+        let Some(diff_output) = git::get_commit_diff(&self.repo_path, hash) else {
+            return;
+        };
+
+        // Parse git show output (contains multiple files)
+        // Format:
+        // commit <hash>
+        // Author: <author>
+        // Date:   <date>
+        //
+        //     <message>
+        //
+        // diff --git a/<file> b/<file>
+        // --- a/<file>
+        // +++ b/<file>
+        // @@ ... @@
+        // ...
+
+        let mut current_file: Option<FileDiff> = None;
+        let mut current_hunk: Option<DiffHunk> = None;
+        let mut old_line = 0usize;
+        let mut new_line = 0usize;
+
+        for line in diff_output.lines() {
+            // Start of a new file diff
+            if line.starts_with("diff --git ") {
+                // Save previous hunk if exists
+                if let Some(hunk) = current_hunk.take() {
+                    if let Some(ref mut file) = current_file {
+                        file.hunks.push(hunk);
+                    }
+                }
+                // Save previous file if exists
+                if let Some(file) = current_file.take() {
+                    self.diffs.push(file);
+                }
+
+                // Parse file path from "diff --git a/<path> b/<path>"
+                let path = line
+                    .strip_prefix("diff --git ")
+                    .and_then(|s| s.split_once(' '))
+                    .map(|(a, _)| a.strip_prefix("a/").unwrap_or(a))
+                    .unwrap_or("")
+                    .to_string();
+
+                current_file = Some(FileDiff {
+                    path,
+                    status: FileStatus::Modified, // Default, will be updated
+                    staged: false,                // Not applicable for commits
+                    additions: 0,
+                    deletions: 0,
+                    hunks: Vec::new(),
+                });
+            } else if line.starts_with("new file mode") {
+                if let Some(ref mut file) = current_file {
+                    file.status = FileStatus::Added;
+                }
+            } else if line.starts_with("deleted file mode") {
+                if let Some(ref mut file) = current_file {
+                    file.status = FileStatus::Deleted;
+                }
+            } else if line.starts_with("rename from") || line.starts_with("rename to") {
+                if let Some(ref mut file) = current_file {
+                    file.status = FileStatus::Renamed;
+                }
+            } else if line.starts_with("@@") {
+                // Save previous hunk if exists
+                if let Some(hunk) = current_hunk.take() {
+                    if let Some(ref mut file) = current_file {
+                        file.hunks.push(hunk);
+                    }
+                }
+
+                let (old_start, new_start) = Self::parse_hunk_header(line);
+                old_line = old_start;
+                new_line = new_start;
+
+                current_hunk = Some(DiffHunk {
+                    header: line.to_string(),
+                    lines: Vec::new(),
+                });
+            } else if let Some(ref mut hunk) = current_hunk {
+                if let Some(rest) = line.strip_prefix('+') {
+                    hunk.lines.push(DiffLine {
+                        kind: LineKind::Added,
+                        content: rest.to_string(),
+                        old_line: None,
+                        new_line: Some(new_line),
+                    });
+                    if let Some(ref mut file) = current_file {
+                        file.additions += 1;
+                    }
+                    new_line += 1;
+                } else if let Some(rest) = line.strip_prefix('-') {
+                    hunk.lines.push(DiffLine {
+                        kind: LineKind::Removed,
+                        content: rest.to_string(),
+                        old_line: Some(old_line),
+                        new_line: None,
+                    });
+                    if let Some(ref mut file) = current_file {
+                        file.deletions += 1;
+                    }
+                    old_line += 1;
+                } else if let Some(rest) = line.strip_prefix(' ') {
+                    hunk.lines.push(DiffLine {
+                        kind: LineKind::Context,
+                        content: rest.to_string(),
+                        old_line: Some(old_line),
+                        new_line: Some(new_line),
+                    });
+                    old_line += 1;
+                    new_line += 1;
+                }
+            }
+        }
+
+        // Don't forget the last hunk and file
+        if let Some(hunk) = current_hunk {
+            if let Some(ref mut file) = current_file {
+                file.hunks.push(hunk);
+            }
+        }
+        if let Some(file) = current_file {
+            self.diffs.push(file);
+        }
     }
 
     /// Load diff for a single file
@@ -609,7 +767,16 @@ impl Panel for GitDiffPanel {
     fn title(&self) -> String {
         let repo_name = git::get_repo_name(&self.repo_path);
         let file_count = self.diffs.len();
-        format!("Git Diff: {} ({} files)", repo_name, file_count)
+        if let Some(ref hash) = self.commit_hash {
+            // Show short hash (first 7 characters)
+            let short_hash = if hash.len() > 7 { &hash[..7] } else { hash };
+            format!(
+                "Git Diff: {} @ {} ({} files)",
+                repo_name, short_hash, file_count
+            )
+        } else {
+            format!("Git Diff: {} ({} files)", repo_name, file_count)
+        }
     }
 
     fn prepare_render(&mut self, theme: &Theme, _config: &Config) {
@@ -705,6 +872,7 @@ impl Panel for GitDiffPanel {
     fn to_session(&self, _session_dir: &Path) -> Option<SessionPanel> {
         Some(SessionPanel::GitDiff {
             repo_path: self.repo_path.clone(),
+            commit_hash: self.commit_hash.clone(),
         })
     }
 

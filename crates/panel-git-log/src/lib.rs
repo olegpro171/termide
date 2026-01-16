@@ -223,21 +223,11 @@ impl GitLogPanel {
             return vec![];
         };
 
-        // Get diff content
-        let Some(diff_content) = git::get_commit_diff(repo, &commit.hash) else {
-            self.status_message = Some(format!("Failed to get diff for {}", commit.hash));
-            return vec![];
-        };
-
-        // Write to temp file
-        let temp_path = PathBuf::from(format!("/tmp/termide-diff-{}.diff", commit.hash));
-        if let Err(e) = std::fs::write(&temp_path, &diff_content) {
-            self.status_message = Some(format!("Failed to write diff: {}", e));
-            return vec![];
-        }
-
-        // Open in editor
-        vec![PanelEvent::OpenFile(temp_path)]
+        // Open Git Diff panel for this commit
+        vec![PanelEvent::OpenGitDiff {
+            repo_path: repo.to_path_buf(),
+            commit_hash: Some(commit.hash.clone()),
+        }]
     }
 
     /// Render repo selector

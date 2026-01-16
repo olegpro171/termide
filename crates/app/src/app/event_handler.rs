@@ -200,8 +200,11 @@ impl App {
                 self.event_cancel_git_operation();
             }
 
-            PanelEvent::OpenGitDiff { repo_path } => {
-                self.event_open_git_diff(repo_path)?;
+            PanelEvent::OpenGitDiff {
+                repo_path,
+                commit_hash,
+            } => {
+                self.event_open_git_diff(repo_path, commit_hash)?;
             }
         }
         Ok(())
@@ -887,13 +890,23 @@ impl App {
     }
 
     /// Handle OpenGitDiff event - open git diff panel for repository
-    fn event_open_git_diff(&mut self, repo_path: PathBuf) -> Result<()> {
+    fn event_open_git_diff(
+        &mut self,
+        repo_path: PathBuf,
+        commit_hash: Option<String>,
+    ) -> Result<()> {
         use termide_panel_git_diff::GitDiffPanel;
 
-        logger::debug(format!("Opening Git Diff panel for {:?}", repo_path));
+        logger::debug(format!(
+            "Opening Git Diff panel for {:?} (commit: {:?})",
+            repo_path, commit_hash
+        ));
         self.close_welcome_panels();
 
-        let panel = GitDiffPanel::new(repo_path);
+        let panel = match commit_hash {
+            Some(hash) => GitDiffPanel::new_for_commit(repo_path, hash),
+            None => GitDiffPanel::new(repo_path),
+        };
         self.add_panel(Box::new(panel));
         self.auto_save_session();
 

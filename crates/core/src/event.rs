@@ -188,7 +188,11 @@ pub enum PanelEvent {
     CancelGitOperation,
 
     /// Open git diff panel for repository
-    OpenGitDiff { repo_path: PathBuf },
+    /// If commit_hash is Some, shows diff for that commit; otherwise shows working directory changes
+    OpenGitDiff {
+        repo_path: PathBuf,
+        commit_hash: Option<String>,
+    },
 
     // === Clipboard ===
     /// Copy text to clipboard

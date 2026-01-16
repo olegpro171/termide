@@ -80,6 +80,9 @@ pub enum SessionPanel {
     GitDiff {
         /// Repository path
         repo_path: PathBuf,
+        /// Commit hash (None = working directory changes, Some = specific commit)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        commit_hash: Option<String>,
     },
     // Note: Welcome panels are NOT saved (they auto-close)
 }

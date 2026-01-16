@@ -818,6 +818,7 @@ impl GitStatusPanel {
                 if let Some(repo) = self.repo_manager.current() {
                     vec![PanelEvent::OpenGitDiff {
                         repo_path: repo.to_path_buf(),
+                        commit_hash: None,
                     }]
                 } else {
                     vec![]
