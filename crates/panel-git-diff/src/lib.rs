@@ -569,7 +569,6 @@ impl GitDiffPanel {
         let file_header_selected_style = Style::default()
             .fg(theme.selection_fg)
             .bg(theme.selection_bg);
-        let staged_badge_style = Style::default().fg(theme.success);
         let line_number_style = Style::default().fg(theme.disabled);
 
         let line_num_width = 4; // Width for each line number column
@@ -588,21 +587,15 @@ impl GitDiffPanel {
                 let is_selected = file_idx == self.selected_file;
                 let is_collapsed = self.collapsed.contains(&file_idx);
 
-                // Clear line
-                let clear_style = if is_selected {
+                let line_style = Style::default().fg(theme.disabled);
+                let header_style = if is_selected {
                     file_header_selected_style
                 } else {
-                    Style::default().bg(theme.bg)
+                    file_header_style
                 };
-                for x in content_area.x..content_area.x + content_area.width {
-                    if let Some(cell) = buf.cell_mut((x, y)) {
-                        cell.set_char(' ');
-                        cell.set_style(clear_style);
-                    }
-                }
 
-                // Render file header
-                let icon = if is_collapsed { ">" } else { "v" };
+                // Build header components
+                let collapse_btn = if is_collapsed { "[▶]" } else { "[▼]" };
                 let status_char = match diff.status {
                     FileStatus::Added => "+",
                     FileStatus::Deleted => "-",
@@ -612,29 +605,34 @@ impl GitDiffPanel {
                 let stats = format!("(+{} -{})", diff.additions, diff.deletions);
                 let staged_marker = if diff.staged { " [staged]" } else { "" };
 
-                let header_style = if is_selected {
-                    file_header_selected_style
-                } else {
-                    file_header_style
-                };
+                // Format: ─[▼] ~ path (+N -M) [staged] ─────────
+                let title_text = format!(
+                    "{} {} {} {}{}",
+                    collapse_btn, status_char, &diff.path, stats, staged_marker
+                );
+                let title_width = title_text.width();
 
-                let mut x = content_area.x;
-                buf.set_string(x, y, icon, header_style);
-                x += 2;
-                buf.set_string(x, y, status_char, header_style);
-                x += 2;
-                buf.set_string(x, y, &diff.path, header_style);
-                x += diff.path.width() as u16 + 1;
-                buf.set_string(x, y, &stats, header_style);
-                x += stats.width() as u16;
+                // Render from edge to edge (content_area boundaries)
+                let header_x = content_area.x;
+                let header_end = content_area.x + content_area.width;
+                let mut x = header_x;
 
-                if diff.staged {
-                    let badge_style = if is_selected {
-                        header_style
-                    } else {
-                        staged_badge_style
-                    };
-                    buf.set_string(x, y, staged_marker, badge_style);
+                // Leading line ─
+                buf.set_string(x, y, "─", line_style);
+                x += 1;
+
+                // Title text (highlighted when selected)
+                buf.set_string(x, y, &title_text, header_style);
+                x += title_width as u16;
+
+                // Space
+                buf.set_string(x, y, " ", line_style);
+                x += 1;
+
+                // Trailing line ─────────
+                while x < header_end {
+                    buf.set_string(x, y, "─", line_style);
+                    x += 1;
                 }
 
                 y += 1;
