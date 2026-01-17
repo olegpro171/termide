@@ -10,6 +10,7 @@ use termide_app_event::{HotkeyAction, HotkeyProcessor};
 
 use super::App;
 use crate::state::{ActiveModal, PendingAction};
+use crate::PanelExt;
 use termide_i18n as i18n;
 
 impl App {
@@ -146,32 +147,46 @@ impl App {
         }
     }
 
+    /// Close completion popup on active editor (if any) before focus change
+    fn close_completion_popup_before_focus_change(&mut self) {
+        if let Some(panel) = self.layout_manager.active_panel_mut() {
+            if let Some(editor) = panel.as_editor_mut() {
+                editor.cancel_completion();
+            }
+        }
+    }
+
     /// Navigate to previous group with session save
     fn navigate_to_prev_group(&mut self) {
+        self.close_completion_popup_before_focus_change();
         self.layout_manager.prev_group();
         self.check_and_save_session();
     }
 
     /// Navigate to next group with session save
     fn navigate_to_next_group(&mut self) {
+        self.close_completion_popup_before_focus_change();
         self.layout_manager.next_group();
         self.check_and_save_session();
     }
 
     /// Navigate to previous panel in group with session save
     fn navigate_to_prev_panel_in_group(&mut self) {
+        self.close_completion_popup_before_focus_change();
         self.layout_manager.prev_panel_in_group();
         self.check_and_save_session();
     }
 
     /// Navigate to next panel in group with session save
     fn navigate_to_next_panel_in_group(&mut self) {
+        self.close_completion_popup_before_focus_change();
         self.layout_manager.next_panel_in_group();
         self.check_and_save_session();
     }
 
     /// Navigate to specific group by number (1-indexed)
     fn navigate_to_group(&mut self, group_num: usize) {
+        self.close_completion_popup_before_focus_change();
         // Convert from 1-indexed (user-facing) to 0-indexed (internal)
         let index = group_num.saturating_sub(1);
         self.layout_manager.set_focus(index);

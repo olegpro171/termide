@@ -253,7 +253,12 @@ impl App {
         logger::info(format!("Opening file via event: {}", filename));
 
         match Editor::open_file_with_config(file_path.clone(), self.state.editor_config()) {
-            Ok(editor_panel) => {
+            Ok(mut editor_panel) => {
+                // Initialize LSP for the editor
+                if let Some(ref mut lsp_manager) = self.state.lsp_manager {
+                    editor_panel.init_lsp(lsp_manager);
+                }
+
                 self.add_panel(Box::new(editor_panel));
                 self.auto_save_session();
                 logger::info(format!("File '{}' opened in editor", filename));

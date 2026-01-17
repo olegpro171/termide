@@ -15,12 +15,15 @@ use termide_theme::Theme;
 use termide_ui::ScrollBar;
 
 use crate::{
-    clipboard,
+    clipboard, completion_popup,
     config::*,
     constants, cursor, file_io, git, keyboard, rendering, search, selection,
-    state::{FileState, GitIntegration, InputState, RenderingCache, SearchController},
+    state::{FileState, GitIntegration, InputState, LspState, RenderingCache, SearchController},
     text_editing, word_wrap,
 };
+
+// Re-export LspManager for use in app integration
+pub use termide_lsp::{CompletionTriggerKind, LspManager};
 
 /// Convert screen column to grapheme index, accounting for display widths.
 ///
@@ -67,6 +70,8 @@ pub struct Editor {
     pub(crate) render_cache: RenderingCache,
     /// Input state (clicks, preferred column)
     pub(crate) input: InputState,
+    /// LSP integration state
+    pub(crate) lsp: LspState,
 
     // === UI state ===
     /// Modal window request
@@ -101,6 +106,7 @@ impl Editor {
             git: GitIntegration::new(),
             render_cache: RenderingCache::new(),
             input: InputState::new(),
+            lsp: LspState::new(),
             modal_request: None,
             config_update: None,
             status_message: None,
@@ -205,6 +211,7 @@ impl Editor {
             git,
             render_cache,
             input: InputState::new(),
+            lsp: LspState::new(),
             modal_request: None,
             config_update: None,
             status_message: None,
@@ -233,11 +240,395 @@ impl Editor {
             git: GitIntegration::new(),
             render_cache: RenderingCache::new(),
             input: InputState::new(),
+            lsp: LspState::new(),
             modal_request: None,
             config_update: None,
             status_message: None,
             scroll_follows_cursor: true,
         }
+    }
+
+    // =========================================================================
+    // LSP Integration
+    // =========================================================================
+
+    /// Initialize LSP for this editor's file.
+    ///
+    /// Should be called after opening a file to enable LSP features.
+    /// This detects the language, starts the appropriate server if configured,
+    /// and sends the `didOpen` notification.
+    pub fn init_lsp(&mut self, lsp_manager: &mut LspManager) {
+        if let Some(path) = self.buffer.file_path() {
+            self.lsp.init_for_file(path, lsp_manager);
+
+            if self.lsp.enabled {
+                let content = self.buffer.to_string();
+                self.lsp.did_open(path, &content, lsp_manager);
+            }
+        }
+    }
+
+    /// Notify LSP about buffer content change.
+    ///
+    /// Should be called after any text modification (insert, delete, etc.)
+    /// to keep the language server in sync with the editor content.
+    pub fn notify_lsp_change(&mut self, lsp_manager: &LspManager) {
+        if let Some(path) = self.buffer.file_path() {
+            let content = self.buffer.to_string();
+            self.lsp.did_change(path, &content, lsp_manager);
+        }
+    }
+
+    /// Cleanup LSP when editor is closed.
+    ///
+    /// Sends the `didClose` notification to the language server.
+    pub fn cleanup_lsp(&self, lsp_manager: &LspManager) {
+        if let Some(path) = self.buffer.file_path() {
+            self.lsp.did_close(path, lsp_manager);
+        }
+    }
+
+    /// Check if LSP is enabled for this editor.
+    pub fn lsp_enabled(&self) -> bool {
+        self.lsp.enabled
+    }
+
+    /// Get the language ID for this editor's file.
+    pub fn lsp_language(&self) -> Option<&str> {
+        self.lsp.language_id.as_deref()
+    }
+
+    /// Mark that the buffer has changed (for LSP notification).
+    pub fn mark_lsp_changed(&mut self) {
+        self.lsp.mark_changed();
+    }
+
+    /// Check if there are pending LSP changes that need to be sent.
+    pub fn has_pending_lsp_change(&self) -> bool {
+        self.lsp.has_pending_change()
+    }
+
+    /// Send pending LSP change notification if needed.
+    ///
+    /// Returns true if a notification was sent.
+    pub fn flush_lsp_changes(&mut self, lsp_manager: &LspManager) -> bool {
+        if self.lsp.has_pending_change() {
+            self.notify_lsp_change(lsp_manager);
+            self.lsp.clear_pending_change();
+            true
+        } else {
+            false
+        }
+    }
+
+    // === LSP Completion methods ===
+
+    /// Trigger completion popup request.
+    ///
+    /// This marks that completion is requested. The actual LSP request
+    /// should be made by the app layer which has access to LspManager.
+    pub fn trigger_completion(&mut self) {
+        // Mark that completion is requested - will be picked up by app layer
+        // The actual request requires LspManager which we don't have here
+        self.lsp.completion_requested = true;
+
+        // Save the start of the word as trigger column for prefix calculation
+        self.lsp.completion_trigger_column = self.find_word_start_column();
+    }
+
+    /// Find the column position of the start of the current word.
+    ///
+    /// Used to determine the prefix when triggering completion.
+    fn find_word_start_column(&self) -> usize {
+        let line_text = self
+            .buffer
+            .line(self.cursor.line)
+            .map(|cow| cow.to_string())
+            .unwrap_or_default();
+
+        let cursor_col = self.cursor.column;
+        if cursor_col == 0 || line_text.is_empty() {
+            return 0;
+        }
+
+        // Walk backwards from cursor to find word start
+        let chars: Vec<char> = line_text.chars().collect();
+        let mut start = cursor_col.min(chars.len());
+
+        while start > 0 {
+            let ch = chars[start - 1];
+            // Stop at non-identifier characters
+            if !ch.is_alphanumeric() && ch != '_' {
+                break;
+            }
+            start -= 1;
+        }
+
+        start
+    }
+
+    /// Check if completion was requested and clear the flag.
+    pub fn take_completion_request(&mut self) -> Option<(usize, usize)> {
+        if self.lsp.completion_requested {
+            self.lsp.completion_requested = false;
+            Some((self.cursor.line, self.cursor.column))
+        } else {
+            None
+        }
+    }
+
+    /// Request completion from LSP at current cursor position.
+    pub fn request_completion(&mut self, lsp_manager: &LspManager) {
+        if let Some(path) = self.buffer.file_path() {
+            self.lsp.request_completion(
+                path,
+                self.cursor.line,
+                self.cursor.column,
+                CompletionTriggerKind::INVOKED,
+                None,
+                lsp_manager,
+            );
+        }
+    }
+
+    /// Poll for completion response and show popup if available.
+    pub fn poll_completion(&mut self) {
+        if let Some(response) = self.lsp.poll_completion() {
+            let mut popup = completion_popup::CompletionPopup::from_response(response);
+
+            // Get the prefix (text between trigger column and cursor)
+            let prefix = self.get_completion_prefix();
+            if !prefix.is_empty() {
+                popup.set_filter(&prefix);
+            }
+
+            if !popup.is_empty() {
+                self.lsp.completion_popup = Some(popup);
+            }
+        }
+    }
+
+    /// Get the prefix text for completion (from trigger column to cursor).
+    fn get_completion_prefix(&self) -> String {
+        let line_text = self
+            .buffer
+            .line(self.cursor.line)
+            .map(|cow| cow.to_string())
+            .unwrap_or_default();
+
+        let trigger_col = self.lsp.completion_trigger_column;
+        let cursor_col = self.cursor.column;
+
+        if cursor_col > trigger_col && cursor_col <= line_text.chars().count() {
+            line_text
+                .chars()
+                .skip(trigger_col)
+                .take(cursor_col - trigger_col)
+                .collect()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Accept selected completion item.
+    ///
+    /// Inserts the completion text and closes the popup.
+    /// Deletes from trigger column to cursor, then inserts completion text.
+    pub fn accept_completion(&mut self) {
+        if let Some(popup) = &self.lsp.completion_popup {
+            if let Some(insert_text) = popup.selected_insert_text() {
+                // Calculate total chars to delete:
+                // From trigger_column to current cursor position
+                let trigger_col = self.lsp.completion_trigger_column;
+                let cursor_col = self.cursor.column;
+                let chars_to_delete = cursor_col.saturating_sub(trigger_col);
+
+                // Delete the prefix + any additional typed characters
+                for _ in 0..chars_to_delete {
+                    let _ = self.backspace();
+                }
+
+                // Insert the completion text
+                for ch in insert_text.chars() {
+                    let _ = self.insert_char(ch);
+                }
+            }
+        }
+        self.lsp.completion_popup = None;
+    }
+
+    /// Cancel completion popup.
+    pub fn cancel_completion(&mut self) {
+        self.lsp.completion_popup = None;
+    }
+
+    /// Select next completion item.
+    pub fn next_completion(&mut self) {
+        if let Some(popup) = &mut self.lsp.completion_popup {
+            popup.select_next();
+        }
+    }
+
+    /// Select previous completion item.
+    pub fn prev_completion(&mut self) {
+        if let Some(popup) = &mut self.lsp.completion_popup {
+            popup.select_prev();
+        }
+    }
+
+    /// Filter completion with typed character.
+    ///
+    /// Also inserts the character into the buffer.
+    pub fn filter_completion(&mut self, ch: char) {
+        // Insert char into buffer
+        let _ = self.insert_char(ch);
+
+        // Update popup filter
+        if let Some(popup) = &mut self.lsp.completion_popup {
+            popup.append_filter(ch);
+            // Close popup if no matches
+            if popup.is_empty() {
+                self.lsp.completion_popup = None;
+            }
+        }
+    }
+
+    /// Remove last filter character from completion.
+    ///
+    /// Also performs backspace in the buffer.
+    pub fn backspace_completion(&mut self) {
+        // Perform backspace in buffer
+        let _ = self.backspace();
+
+        // Update popup filter
+        if let Some(popup) = &mut self.lsp.completion_popup {
+            popup.backspace_filter();
+        }
+    }
+
+    /// Check if completion popup is open.
+    pub fn has_completion_popup(&self) -> bool {
+        self.lsp.completion_popup.is_some()
+    }
+
+    /// Check if LSP server is loading (for spinner display).
+    pub fn is_lsp_loading(&self) -> bool {
+        self.lsp.server_loading
+    }
+
+    /// Update server loading status from actual LSP server status.
+    ///
+    /// Returns true if status changed (needs redraw).
+    pub fn update_lsp_loading_status(&mut self, lsp_manager: &LspManager) -> bool {
+        if let (Some(file_path), Some(ref lang)) = (self.file_path(), &self.lsp.language_id) {
+            // Check if server went back to indexing (e.g., after file changes)
+            if !self.lsp.server_loading && lsp_manager.server_is_indexing(lang, file_path) {
+                self.lsp.server_loading = true;
+                return true;
+            }
+
+            // Check if server became ready
+            if self.lsp.server_loading && lsp_manager.server_is_ready(lang, file_path) {
+                self.lsp.server_loading = false;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Schedule auto-completion for the inserted character.
+    ///
+    /// Call this after inserting a character when auto_completion is enabled.
+    /// For trigger characters (`.`, `:`, etc.), triggers immediately.
+    /// For word characters, schedules delayed completion.
+    pub fn schedule_auto_completion(&mut self, ch: char, lsp_manager: &LspManager) {
+        // Don't schedule if popup is already open or server is loading
+        if self.lsp.completion_popup.is_some() || self.lsp.server_loading {
+            return;
+        }
+
+        // Trigger characters - trigger immediately with TriggerCharacter kind
+        const TRIGGER_CHARS: &[char] = &['.', ':', '<', '('];
+        if TRIGGER_CHARS.contains(&ch) {
+            self.trigger_completion_with_kind(
+                lsp_manager,
+                CompletionTriggerKind::TRIGGER_CHARACTER,
+                Some(ch.to_string()),
+            );
+            return;
+        }
+
+        // Word characters - schedule delayed completion
+        if ch.is_alphanumeric() || ch == '_' {
+            self.lsp.schedule_completion();
+        }
+    }
+
+    /// Trigger completion with specific trigger kind.
+    fn trigger_completion_with_kind(
+        &mut self,
+        lsp_manager: &LspManager,
+        trigger_kind: CompletionTriggerKind,
+        trigger_character: Option<String>,
+    ) {
+        let file_path = self.file_path().map(|p| p.to_path_buf());
+        if let Some(file_path) = file_path {
+            // Store trigger column for prefix calculation
+            self.lsp.completion_trigger_column = self.get_word_start_column();
+            self.lsp.completion_requested = true;
+
+            self.lsp.request_completion(
+                &file_path,
+                self.cursor.line,
+                self.cursor.column,
+                trigger_kind,
+                trigger_character,
+                lsp_manager,
+            );
+        }
+    }
+
+    /// Check and trigger delayed auto-completion if timer expired.
+    ///
+    /// Call this periodically (e.g., in tick/poll).
+    /// Returns true if completion was triggered.
+    pub fn check_auto_completion(&mut self, lsp_manager: &LspManager, delay_ms: u64) -> bool {
+        // Don't trigger if popup is open
+        if self.lsp.completion_popup.is_some() {
+            self.lsp.cancel_completion_timer();
+            return false;
+        }
+
+        if self.lsp.check_completion_timer(delay_ms) {
+            self.trigger_completion_with_kind(lsp_manager, CompletionTriggerKind::INVOKED, None);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the column where current word starts (for completion prefix).
+    fn get_word_start_column(&self) -> usize {
+        if let Some(line_text) = self.buffer.line(self.cursor.line) {
+            let prefix: String = line_text.chars().take(self.cursor.column).collect();
+            // Find start of current word (alphanumeric + underscore)
+            let word_start = prefix
+                .char_indices()
+                .rev()
+                .find(|(_, c)| !c.is_alphanumeric() && *c != '_')
+                .map(|(i, _)| i + 1)
+                .unwrap_or(0);
+            word_start
+        } else {
+            self.cursor.column
+        }
+    }
+
+    /// Take the last inserted character (if any) and clear it.
+    ///
+    /// Used by key_handler to schedule auto-completion after character insertion.
+    pub fn take_last_inserted_char(&mut self) -> Option<char> {
+        self.lsp.last_inserted_char.take()
     }
 
     /// Save file
@@ -972,6 +1363,9 @@ impl Editor {
         self.input.preferred_column = None;
         self.clamp_cursor();
 
+        // Track inserted character for auto-completion
+        self.lsp.last_inserted_char = Some(ch);
+
         // Invalidate highlighting cache and schedule git update
         self.invalidate_cache_after_edit(result.start_line, result.is_multiline);
 
@@ -1344,6 +1738,43 @@ impl Editor {
                 is_focused,
             );
         }
+
+        // Render completion popup if active
+        if let Some(ref popup) = self.lsp.completion_popup {
+            use unicode_width::UnicodeWidthStr;
+
+            // Only render if cursor is in visible area
+            if self.cursor.line >= self.viewport.top_line
+                && self.cursor.line < self.viewport.top_line + content_height
+            {
+                // Calculate cursor screen position
+                let line_number_width = rendering::LINE_NUMBER_WIDTH as u16;
+                let content_x = area.x + 1 + line_number_width; // +1 for border
+
+                // Calculate cursor X position within the line
+                // Calculate display width up to cursor column
+                let cursor_screen_col: usize = self
+                    .buffer
+                    .line(self.cursor.line)
+                    .map(|line| {
+                        line.chars()
+                            .take(self.cursor.column)
+                            .map(|c| c.to_string().width())
+                            .sum()
+                    })
+                    .unwrap_or(0);
+
+                let cursor_x = content_x + cursor_screen_col as u16;
+                let cursor_y = area.y + 1 + (self.cursor.line - self.viewport.top_line) as u16;
+
+                // Render popup within editor area only and store rect for mouse hit testing
+                self.lsp.popup_rect = popup.render(buf, area, cursor_x, cursor_y, theme);
+            } else {
+                self.lsp.popup_rect = None;
+            }
+        } else {
+            self.lsp.popup_rect = None;
+        }
     }
 
     /// Start search
@@ -1555,16 +1986,20 @@ impl Editor {
         Ok(count)
     }
 
-    /// Prepare for navigation: close search and clear selection.
+    /// Prepare for navigation: close search, clear selection, and close completion popup.
     fn prepare_for_navigation(&mut self) {
         self.close_search();
         self.selection = None;
+        // Close completion popup on cursor movement
+        self.lsp.completion_popup = None;
     }
 
-    /// Prepare for navigation with selection: close search and start/extend selection.
+    /// Prepare for navigation with selection: close search, start/extend selection, and close completion popup.
     fn prepare_for_navigation_with_selection(&mut self) {
         self.close_search();
         self.start_or_extend_selection();
+        // Close completion popup on cursor movement
+        self.lsp.completion_popup = None;
     }
 
     /// Handle backspace/delete key with selection awareness.
@@ -1604,6 +2039,8 @@ impl Editor {
             self.render_cache.highlight.invalidate_line(start_line);
         }
         self.schedule_git_diff_update();
+        // Mark for LSP notification
+        self.mark_lsp_changed();
     }
 
     /// Handle undo/redo operation with unified logic.
@@ -1625,6 +2062,8 @@ impl Editor {
                 .invalidate_range(0, self.buffer.line_count());
             // Schedule git diff update
             self.schedule_git_diff_update();
+            // Mark for LSP notification
+            self.mark_lsp_changed();
         }
         Ok(())
     }
@@ -1816,6 +2255,8 @@ impl Panel for Editor {
     }
 
     fn title(&self) -> String {
+        const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
         let modified = if self.buffer.is_modified() { "*" } else { "" };
 
         let external_change = if self.file_state.external_change_detected {
@@ -1840,9 +2281,22 @@ impl Panel for Editor {
             String::new()
         };
 
+        // LSP loading spinner
+        let lsp_indicator = if self.lsp.server_loading {
+            let frame_idx = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                / 100) as usize
+                % SPINNER_FRAMES.len();
+            format!("{} ", SPINNER_FRAMES[frame_idx])
+        } else {
+            String::new()
+        };
+
         format!(
-            "{}{}{}{}",
-            self.file_state.title, modified, external_change, search_info
+            "{}{}{}{}{}",
+            lsp_indicator, self.file_state.title, modified, external_change, search_info
         )
     }
 
@@ -1890,6 +2344,7 @@ impl Panel for Editor {
             self.config.read_only,
             self.search.state.is_some(),
             self.selection.is_some(),
+            self.lsp.completion_popup.is_some(),
             &self.config.keybindings,
         );
 
@@ -1921,6 +2376,49 @@ impl Panel for Editor {
         panel_area: Rect,
     ) -> Vec<PanelEvent> {
         use crossterm::event::{MouseButton, MouseEventKind};
+
+        // Handle completion popup mouse interactions first
+        if let Some(popup_rect) = self.lsp.popup_rect {
+            let in_popup = mouse.column >= popup_rect.x
+                && mouse.column < popup_rect.x + popup_rect.width
+                && mouse.row >= popup_rect.y
+                && mouse.row < popup_rect.y + popup_rect.height;
+
+            match mouse.kind {
+                MouseEventKind::ScrollUp if in_popup => {
+                    if let Some(ref mut popup) = self.lsp.completion_popup {
+                        popup.scroll_up(3);
+                    }
+                    return vec![];
+                }
+                MouseEventKind::ScrollDown if in_popup => {
+                    if let Some(ref mut popup) = self.lsp.completion_popup {
+                        popup.scroll_down(3);
+                    }
+                    return vec![];
+                }
+                MouseEventKind::Down(MouseButton::Left) if in_popup => {
+                    // Click inside popup - select and accept
+                    let row = (mouse.row - popup_rect.y) as usize;
+                    if let Some(ref mut popup) = self.lsp.completion_popup {
+                        popup.select_at_row(row);
+                    }
+                    // Accept the selected completion
+                    self.accept_completion();
+                    self.lsp.popup_rect = None;
+                    // Skip the following MouseUp to prevent cursor jump
+                    self.input.click_tracker.skip_next_up = true;
+                    return vec![];
+                }
+                MouseEventKind::Down(MouseButton::Left) if !in_popup => {
+                    // Click outside popup - close it and continue with normal handling
+                    self.lsp.completion_popup = None;
+                    self.lsp.popup_rect = None;
+                    // Fall through to normal mouse handling
+                }
+                _ => {}
+            }
+        }
 
         match mouse.kind {
             MouseEventKind::ScrollUp => {
@@ -2179,7 +2677,8 @@ impl Panel for Editor {
     }
 
     fn captures_escape(&self) -> bool {
-        self.search.state.is_some()
+        // Capture Escape when search is active or completion popup is open
+        self.search.state.is_some() || self.lsp.completion_popup.is_some()
     }
 
     fn to_session(&self, session_dir: &std::path::Path) -> Option<SessionPanel> {

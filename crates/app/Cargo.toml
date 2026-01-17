@@ -36,6 +36,7 @@ termide-theme = { path = "../theme" }
 termide-i18n = { path = "../i18n" }
 termide-session = { path = "../session" }
 termide-git = { path = "../git" }
+termide-lsp = { path = "../lsp" }
 termide-watcher = { path = "../watcher" }
 termide-logger = { path = "../logger" }
 termide-system-monitor = { path = "../system-monitor" }

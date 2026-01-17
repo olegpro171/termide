@@ -31,6 +31,10 @@ pub struct Config {
     #[serde(default)]
     pub terminal: TerminalSettings,
 
+    /// LSP settings
+    #[serde(default)]
+    pub lsp: LspSettings,
+
     /// Logging settings
     #[serde(default)]
     pub logging: LoggingSettings,
@@ -136,6 +140,41 @@ pub struct LoggingSettings {
     pub resource_monitor_interval: u64,
 }
 
+/// LSP (Language Server Protocol) settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LspSettings {
+    /// Enable LSP support
+    #[serde(default = "default_lsp_enabled")]
+    pub enabled: bool,
+
+    /// Auto-trigger completion on typing
+    #[serde(default = "default_lsp_auto_completion")]
+    pub auto_completion: bool,
+
+    /// Delay before triggering auto-completion (ms)
+    #[serde(default = "default_lsp_completion_delay_ms")]
+    pub completion_delay_ms: u64,
+
+    /// Per-language server configurations
+    #[serde(default = "default_lsp_servers")]
+    pub servers: std::collections::HashMap<String, LspServerSettings>,
+}
+
+/// Configuration for a specific LSP server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LspServerSettings {
+    /// Command to start the server
+    pub command: String,
+
+    /// Command arguments
+    #[serde(default)]
+    pub args: Vec<String>,
+
+    /// File patterns to identify project root
+    #[serde(default)]
+    pub root_markers: Vec<String>,
+}
+
 // Default value functions for serde
 fn default_theme_name() -> String {
     defaults::THEME_NAME.to_string()
@@ -187,6 +226,77 @@ fn default_min_level() -> String {
 
 fn default_resource_monitor_interval() -> u64 {
     defaults::RESOURCE_MONITOR_INTERVAL
+}
+
+fn default_lsp_enabled() -> bool {
+    defaults::LSP_ENABLED
+}
+
+fn default_lsp_auto_completion() -> bool {
+    defaults::LSP_AUTO_COMPLETION
+}
+
+fn default_lsp_completion_delay_ms() -> u64 {
+    defaults::LSP_COMPLETION_DELAY_MS
+}
+
+fn default_lsp_servers() -> std::collections::HashMap<String, LspServerSettings> {
+    let mut servers = std::collections::HashMap::new();
+
+    // Rust - rust-analyzer
+    servers.insert(
+        "rust".to_string(),
+        LspServerSettings {
+            command: "rust-analyzer".to_string(),
+            args: vec![],
+            root_markers: vec!["Cargo.toml".to_string()],
+        },
+    );
+
+    // Python - pylsp or pyright
+    servers.insert(
+        "python".to_string(),
+        LspServerSettings {
+            command: "pylsp".to_string(),
+            args: vec![],
+            root_markers: vec![
+                "pyproject.toml".to_string(),
+                "setup.py".to_string(),
+                "requirements.txt".to_string(),
+            ],
+        },
+    );
+
+    // TypeScript/JavaScript - typescript-language-server
+    servers.insert(
+        "typescript".to_string(),
+        LspServerSettings {
+            command: "typescript-language-server".to_string(),
+            args: vec!["--stdio".to_string()],
+            root_markers: vec!["tsconfig.json".to_string(), "package.json".to_string()],
+        },
+    );
+
+    servers.insert(
+        "javascript".to_string(),
+        LspServerSettings {
+            command: "typescript-language-server".to_string(),
+            args: vec!["--stdio".to_string()],
+            root_markers: vec!["package.json".to_string()],
+        },
+    );
+
+    // Go - gopls
+    servers.insert(
+        "go".to_string(),
+        LspServerSettings {
+            command: "gopls".to_string(),
+            args: vec![],
+            root_markers: vec!["go.mod".to_string()],
+        },
+    );
+
+    servers
 }
 
 /// Legacy flat config format for migration.
@@ -243,6 +353,7 @@ impl From<LegacyConfig> for Config {
             },
             git_status: GitStatusSettings::default(),
             terminal: TerminalSettings::default(),
+            lsp: LspSettings::default(),
             logging: LoggingSettings {
                 file_path: legacy.log_file_path,
                 min_level: legacy.min_log_level,
@@ -294,6 +405,17 @@ impl Default for LoggingSettings {
             file_path: None,
             min_level: default_min_level(),
             resource_monitor_interval: default_resource_monitor_interval(),
+        }
+    }
+}
+
+impl Default for LspSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_lsp_enabled(),
+            auto_completion: default_lsp_auto_completion(),
+            completion_delay_ms: default_lsp_completion_delay_ms(),
+            servers: default_lsp_servers(),
         }
     }
 }

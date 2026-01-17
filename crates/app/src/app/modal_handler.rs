@@ -578,7 +578,11 @@ impl App {
                             full_path.clone(),
                             self.state.editor_config(),
                         ) {
-                            Ok(editor_panel) => {
+                            Ok(mut editor_panel) => {
+                                // Initialize LSP for the editor
+                                if let Some(ref mut lsp_manager) = self.state.lsp_manager {
+                                    editor_panel.init_lsp(lsp_manager);
+                                }
                                 self.add_panel(Box::new(editor_panel));
                                 self.auto_save_session();
                             }
@@ -595,7 +599,11 @@ impl App {
                             full_path.clone(),
                             self.state.editor_config(),
                         ) {
-                            Ok(editor_panel) => {
+                            Ok(mut editor_panel) => {
+                                // Initialize LSP for the editor
+                                if let Some(ref mut lsp_manager) = self.state.lsp_manager {
+                                    editor_panel.init_lsp(lsp_manager);
+                                }
                                 self.add_panel(Box::new(editor_panel));
                                 self.auto_save_session();
                             }

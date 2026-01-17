@@ -10,6 +10,7 @@ use std::sync::mpsc;
 
 use termide_config::constants::DEFAULT_MAIN_PANEL_WIDTH;
 use termide_config::Config;
+use termide_lsp::{LspConfig, LspManager, LspServerConfig};
 use termide_panel_editor::EditorConfig;
 use termide_system_monitor::SystemMonitor;
 use termide_theme::Theme;
@@ -96,6 +97,8 @@ pub struct AppState {
     pub needs_redraw: bool,
     /// Last time spinner was updated (for throttling spinner animation)
     pub last_spinner_update: Option<std::time::Instant>,
+    /// LSP manager for language server integration
+    pub lsp_manager: Option<LspManager>,
 }
 
 impl Default for AppState {
@@ -123,6 +126,14 @@ impl AppState {
             main_panel_width: DEFAULT_MAIN_PANEL_WIDTH,
         };
 
+        // Create LSP manager if enabled
+        let lsp_manager = if config.lsp.enabled {
+            let lsp_config = Self::create_lsp_config(&config);
+            Some(LspManager::new(lsp_config))
+        } else {
+            None
+        };
+
         Self {
             should_quit: false,
             ui: UiState::default(),
@@ -141,7 +152,26 @@ impl AppState {
             last_session_save: None,
             needs_redraw: true, // Initial draw needed
             last_spinner_update: None,
+            lsp_manager,
         }
+    }
+
+    /// Create LSP configuration from app config
+    fn create_lsp_config(config: &Config) -> LspConfig {
+        let mut servers = std::collections::HashMap::new();
+
+        for (lang, server_config) in &config.lsp.servers {
+            servers.insert(
+                lang.clone(),
+                LspServerConfig {
+                    command: server_config.command.clone(),
+                    args: server_config.args.clone(),
+                    root_markers: server_config.root_markers.clone(),
+                },
+            );
+        }
+
+        LspConfig { servers }
     }
 
     /// Set new theme and update config

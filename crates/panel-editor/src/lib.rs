@@ -5,6 +5,7 @@
 
 mod click_tracker;
 pub mod clipboard;
+mod completion_popup;
 pub mod config;
 pub mod constants;
 mod core;
@@ -21,4 +22,4 @@ pub mod word_wrap;
 
 // Re-export main types
 pub use config::{EditorConfig, EditorInfo};
-pub use core::Editor;
+pub use core::{Editor, LspManager};

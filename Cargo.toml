@@ -38,6 +38,8 @@ log = "0.4"
 libc = "0.2"
 glob = "0.3"
 similar = "2.7"
+serde_json = "1.0"
+url = "2"
 
 [package]
 name = "termide"

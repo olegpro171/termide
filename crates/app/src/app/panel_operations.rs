@@ -485,6 +485,11 @@ impl App {
                     let line_0based = line_number.saturating_sub(1);
                     editor_panel.set_cursor_line(line_0based);
 
+                    // Initialize LSP for the editor
+                    if let Some(ref mut lsp_manager) = self.state.lsp_manager {
+                        editor_panel.init_lsp(lsp_manager);
+                    }
+
                     self.add_panel(Box::new(editor_panel));
                     self.auto_save_session();
 

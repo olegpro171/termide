@@ -76,6 +76,30 @@ impl App {
                 // Legacy methods still in use
                 let modal_request = panel.take_modal_request();
                 let config_update = if let Some(editor) = panel.as_editor_mut() {
+                    // Flush pending LSP changes
+                    if let Some(ref lsp_manager) = self.state.lsp_manager {
+                        editor.flush_lsp_changes(lsp_manager);
+                    }
+
+                    // Handle completion request (Ctrl+Space)
+                    if editor.take_completion_request().is_some() {
+                        if let Some(ref lsp_manager) = self.state.lsp_manager {
+                            editor.request_completion(lsp_manager);
+                        }
+                    }
+
+                    // Handle auto-completion on character insertion
+                    if self.state.config.lsp.auto_completion {
+                        if let Some(ch) = editor.take_last_inserted_char() {
+                            if let Some(ref lsp_manager) = self.state.lsp_manager {
+                                editor.schedule_auto_completion(ch, lsp_manager);
+                            }
+                        }
+                    }
+
+                    // Poll for completion response
+                    editor.poll_completion();
+
                     editor.take_config_update()
                 } else {
                     None

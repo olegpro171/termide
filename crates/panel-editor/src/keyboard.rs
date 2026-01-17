@@ -91,6 +91,22 @@ pub enum EditorCommand {
     ReplaceNext,
     ReplaceAll,
 
+    // LSP Completion
+    /// Trigger completion popup (Ctrl+Space)
+    TriggerCompletion,
+    /// Accept selected completion (Enter/Tab when popup open)
+    AcceptCompletion,
+    /// Cancel completion popup (Escape)
+    CancelCompletion,
+    /// Select next completion item (Down arrow when popup open)
+    NextCompletion,
+    /// Select previous completion item (Up arrow when popup open)
+    PrevCompletion,
+    /// Filter completion with typed character
+    FilterCompletion(char),
+    /// Delete last filter character (Backspace when popup open)
+    BackspaceCompletion,
+
     // No operation (for unhandled keys)
     None,
 }
@@ -107,14 +123,44 @@ impl EditorCommand {
     /// * `read_only` - Whether the editor is in read-only mode
     /// * `has_search` - Whether there's an active search
     /// * `has_selection` - Whether there's an active text selection
+    /// * `has_completion` - Whether completion popup is open
     /// * `keybindings` - Configurable keybindings from config
     pub fn from_key_event(
         key: KeyEvent,
         read_only: bool,
         has_search: bool,
         has_selection: bool,
+        has_completion: bool,
         keybindings: &EditorKeybindings,
     ) -> Self {
+        // When completion popup is open, intercept navigation keys
+        if has_completion {
+            match (key.code, key.modifiers) {
+                // Navigation within completion popup
+                (KeyCode::Up, KeyModifiers::NONE) => return Self::PrevCompletion,
+                (KeyCode::Down, KeyModifiers::NONE) => return Self::NextCompletion,
+
+                // Accept completion
+                (KeyCode::Enter, KeyModifiers::NONE) => return Self::AcceptCompletion,
+                (KeyCode::Tab, KeyModifiers::NONE) => return Self::AcceptCompletion,
+
+                // Cancel completion
+                (KeyCode::Esc, KeyModifiers::NONE) => return Self::CancelCompletion,
+
+                // Filter completion with typed characters
+                (KeyCode::Char(ch), KeyModifiers::NONE | KeyModifiers::SHIFT)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    return Self::FilterCompletion(ch)
+                }
+
+                // Backspace removes filter character
+                (KeyCode::Backspace, KeyModifiers::NONE) => return Self::BackspaceCompletion,
+
+                // Other keys close completion and proceed normally
+                _ => {}
+            }
+        }
         // Check configurable bindings first (order matters for conflicts)
         // File operations
         if !read_only
@@ -300,6 +346,11 @@ impl EditorCommand {
             )
         {
             return Self::DuplicateLine;
+        }
+
+        // LSP Completion trigger (Ctrl+.)
+        if key.code == KeyCode::Char('.') && key.modifiers == KeyModifiers::CONTROL {
+            return Self::TriggerCompletion;
         }
 
         // Non-configurable bindings (navigation, basic editing)
@@ -613,6 +664,36 @@ impl EditorCommand {
                 }
                 Err(e) => Err(e),
             },
+
+            // LSP Completion
+            Self::TriggerCompletion => {
+                editor.trigger_completion();
+                Ok(())
+            }
+            Self::AcceptCompletion => {
+                editor.accept_completion();
+                Ok(())
+            }
+            Self::CancelCompletion => {
+                editor.cancel_completion();
+                Ok(())
+            }
+            Self::NextCompletion => {
+                editor.next_completion();
+                Ok(())
+            }
+            Self::PrevCompletion => {
+                editor.prev_completion();
+                Ok(())
+            }
+            Self::FilterCompletion(ch) => {
+                editor.filter_completion(ch);
+                Ok(())
+            }
+            Self::BackspaceCompletion => {
+                editor.backspace_completion();
+                Ok(())
+            }
 
             // No operation
             Self::None => Ok(()),

@@ -16,6 +16,11 @@ impl App {
         // Before closing, cleanup temporary files if this is an unsaved editor
         if let Some(panel) = self.layout_manager.active_panel_mut() {
             if let Some(editor) = panel.as_editor_mut() {
+                // Cleanup LSP before closing
+                if let Some(ref lsp_manager) = self.state.lsp_manager {
+                    editor.cleanup_lsp(lsp_manager);
+                }
+
                 // Check if editor has a temporary unsaved buffer file
                 if let Some(filename) = editor.unsaved_buffer_file() {
                     // Get session directory and delete the temporary file

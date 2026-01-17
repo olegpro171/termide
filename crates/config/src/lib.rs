@@ -16,7 +16,7 @@ pub use keybindings::{
 };
 pub use settings::{
     Config, EditorSettings, FileManagerSettings, GeneralSettings, GitStatusSettings, LegacyConfig,
-    LoggingSettings, TerminalSettings,
+    LoggingSettings, LspServerSettings, LspSettings, TerminalSettings,
 };
 pub use xdg::{get_cache_dir, get_config_dir, get_data_dir};
 
@@ -38,6 +38,10 @@ pub mod defaults {
     pub const EXTENDED_VIEW_WIDTH: usize = 50;
     pub const MIN_LOG_LEVEL: &str = "info";
     pub const RESOURCE_MONITOR_INTERVAL: u64 = 1000;
+    // LSP defaults
+    pub const LSP_ENABLED: bool = true;
+    pub const LSP_AUTO_COMPLETION: bool = true;
+    pub const LSP_COMPLETION_DELAY_MS: u64 = 150;
 }
 
 impl Config {

@@ -6,6 +6,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use unicode_width::UnicodeWidthStr;
 
 use super::App;
+use crate::PanelExt;
 use termide_config::Config;
 use termide_i18n as i18n;
 use termide_logger as logger;
@@ -309,6 +310,16 @@ impl App {
                 && click_y >= rect.y
                 && click_y < rect.y + rect.height
             {
+                // Close completion popup only when focus is actually changing to different group
+                let focus_changing = group_idx != self.layout_manager.focus;
+                if focus_changing {
+                    if let Some(panel) = self.layout_manager.active_panel_mut() {
+                        if let Some(editor) = panel.as_editor_mut() {
+                            editor.cancel_completion();
+                        }
+                    }
+                }
+
                 // Click on a panel group - make it active
                 self.layout_manager.focus = group_idx;
                 if let Some(group) = self.layout_manager.panel_groups.get_mut(group_idx) {

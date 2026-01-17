@@ -248,6 +248,9 @@ impl App {
                     // Update system resource monitoring (CPU, RAM)
                     self.update_system_resources();
 
+                    // Poll LSP completion responses for active editor
+                    self.poll_lsp_completion();
+
                     // Update spinner in Info modal if it's open
                     self.update_info_modal_spinner();
                 }
@@ -470,6 +473,60 @@ impl App {
         }
     }
 
+    /// Poll LSP status for all editors and completion for active editor
+    fn poll_lsp_completion(&mut self) {
+        // First, update LSP loading status for ALL editors (not just active)
+        // This ensures spinners disappear and animate correctly for all panels
+        let mut any_loading = false;
+        for panel in self.layout_manager.iter_all_panels_mut() {
+            if let Some(editor) = panel.as_editor_mut() {
+                // Check if server loading status changed
+                if let Some(ref lsp_manager) = self.state.lsp_manager {
+                    if editor.update_lsp_loading_status(lsp_manager) {
+                        // Server is now ready, trigger redraw to remove spinner
+                        self.state.needs_redraw = true;
+                    }
+                }
+
+                // Track if any editor is still loading (for spinner animation)
+                if editor.is_lsp_loading() {
+                    any_loading = true;
+                }
+            }
+        }
+
+        // Request periodic redraw for spinner animation while any editor is loading
+        if any_loading {
+            self.state.needs_redraw = true;
+        }
+
+        // Now handle completion for the active editor only
+        if let Some(panel) = self.layout_manager.active_panel_mut() {
+            if let Some(editor) = panel.as_editor_mut() {
+                // Check if there's a pending completion response
+                let had_popup_before = editor.has_completion_popup();
+                editor.poll_completion();
+                let has_popup_now = editor.has_completion_popup();
+
+                // Check auto-completion timer if enabled
+                if self.state.config.lsp.auto_completion {
+                    if let Some(ref lsp_manager) = self.state.lsp_manager {
+                        let delay_ms = self.state.config.lsp.completion_delay_ms;
+                        if editor.check_auto_completion(lsp_manager, delay_ms) {
+                            // Completion request triggered, needs redraw
+                            self.state.needs_redraw = true;
+                        }
+                    }
+                }
+
+                // Trigger redraw if popup state changed
+                if had_popup_before != has_popup_now {
+                    self.state.needs_redraw = true;
+                }
+            }
+        }
+    }
+
     /// Update system resource monitoring (CPU, RAM)
     /// Respects the configured update interval
     fn update_system_resources(&mut self) {
@@ -647,6 +704,17 @@ impl App {
             self.state.editor_config(),
         )?;
         termide_logger::info("Session loaded");
+
+        // Initialize LSP for all restored editors
+        if let Some(ref mut lsp_manager) = self.state.lsp_manager {
+            for group in &mut self.layout_manager.panel_groups {
+                for panel in group.panels_mut() {
+                    if let Some(editor) = panel.as_editor_mut() {
+                        editor.init_lsp(lsp_manager);
+                    }
+                }
+            }
+        }
 
         // Clean up orphaned buffer files (not referenced in session anymore)
         if let Err(e) = termide_session::cleanup_orphaned_buffers(&session_dir) {
