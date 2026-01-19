@@ -195,7 +195,7 @@ pub trait Translation: Send + Sync {
     fn help_desc_prev_panel(&self) -> &str;
     fn help_desc_next_panel(&self) -> &str;
     fn help_desc_goto_panel(&self) -> &str;
-    fn help_desc_force_save(&self) -> &str;
+    fn help_desc_save_as(&self) -> &str;
     fn help_desc_reload(&self) -> &str;
     fn help_desc_duplicate_line(&self) -> &str;
     fn help_desc_search_next(&self) -> &str;

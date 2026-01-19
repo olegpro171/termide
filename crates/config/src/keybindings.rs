@@ -213,7 +213,7 @@ pub struct GlobalKeybindings {
 pub struct EditorKeybindings {
     // File operations
     pub save: Option<KeyBinding>,
-    pub force_save: Option<KeyBinding>,
+    pub save_as: Option<KeyBinding>,
     pub reload: Option<KeyBinding>,
 
     // Undo/Redo
@@ -374,7 +374,7 @@ impl EditorKeybindings {
 
         // File operations
         set_default!(save, "Ctrl+S");
-        set_default!(force_save, "Ctrl+Shift+S");
+        set_default!(save_as, "Ctrl+Shift+S");
         set_default!(reload, "Ctrl+Shift+R");
 
         // Undo/Redo

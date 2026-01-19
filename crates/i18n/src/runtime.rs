@@ -596,8 +596,8 @@ impl Translation for RuntimeTranslation {
         self.get_string("help_desc_goto_panel")
     }
 
-    fn help_desc_force_save(&self) -> &str {
-        self.get_string("help_desc_force_save")
+    fn help_desc_save_as(&self) -> &str {
+        self.get_string("help_desc_save_as")
     }
 
     fn help_desc_reload(&self) -> &str {

@@ -266,8 +266,8 @@ impl HelpGenerator {
                 description: t.help_desc_save().to_string(),
             },
             HelpEntry {
-                keys: Self::format_keys(&kb.force_save),
-                description: t.help_desc_force_save().to_string(),
+                keys: Self::format_keys(&kb.save_as),
+                description: t.help_desc_save_as().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.reload),

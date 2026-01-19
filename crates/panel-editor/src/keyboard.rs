@@ -60,9 +60,10 @@ pub enum EditorCommand {
 
     // File operations
     Save,
-    #[allow(dead_code)] // Included for completeness, triggered by Save when no file path exists
+    /// Save file with new name/path
     SaveAs,
     /// Force save (ignore external changes)
+    #[allow(dead_code)]
     ForceSave,
     /// Reload file from disk (discard local changes)
     ReloadFromDisk,
@@ -183,13 +184,13 @@ impl EditorCommand {
         }
         if !read_only
             && matches_binding_or_default(
-                &keybindings.force_save,
+                &keybindings.save_as,
                 &key,
                 KeyCode::Char('S'),
                 KeyModifiers::CONTROL | KeyModifiers::SHIFT,
             )
         {
-            return Self::ForceSave;
+            return Self::SaveAs;
         }
         if matches_binding_or_default(
             &keybindings.reload,
