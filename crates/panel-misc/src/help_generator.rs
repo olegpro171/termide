@@ -331,6 +331,14 @@ impl HelpGenerator {
                 description: t.help_desc_trigger_completion().to_string(),
             },
             HelpEntry {
+                keys: Self::format_keys(&kb.show_hover),
+                description: t.help_desc_show_hover().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.goto_definition),
+                description: t.help_desc_goto_definition().to_string(),
+            },
+            HelpEntry {
                 keys: "Enter".to_string(),
                 description: t.help_desc_accept_completion().to_string(),
             },

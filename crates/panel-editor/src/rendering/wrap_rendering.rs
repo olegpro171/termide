@@ -12,7 +12,9 @@ use termide_git::GitDiffCache;
 use termide_highlight::LineHighlighter;
 use termide_theme::Theme;
 
-use super::{context::RenderContext, cursor_renderer, deletion_markers, highlight_renderer};
+use super::{
+    context::RenderContext, cursor_renderer, deletion_markers, highlight_renderer, line_rendering,
+};
 use crate::git;
 
 /// Render editor content in word wrap mode.
@@ -22,6 +24,7 @@ use crate::git;
 /// - Syntax highlighting with search/selection/cursor line styling
 /// - Git diff markers and line numbers
 /// - Cursor positioning tracking
+/// - Diagnostic virtual lines with error/warning messages
 #[allow(clippy::too_many_arguments)] // Complex rendering requires many parameters
 pub fn render_content_word_wrap<H: LineHighlighter>(
     buf: &mut Buffer,
@@ -34,6 +37,7 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
     syntax_highlighting_enabled: bool,
     highlight_cache: &mut H,
     render_context: &mut RenderContext,
+    diagnostics: &[lsp_types::Diagnostic],
     theme: &Theme,
     content_width: usize,
     content_height: usize,
@@ -46,6 +50,9 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
     current_match_style: Style,
     selection_style: Style,
 ) {
+    // Group diagnostics by line for efficient lookup
+    let diagnostics_by_line = git::group_diagnostics_by_line(diagnostics, buffer);
+
     let mut visual_row = 0;
     let mut line_idx = viewport.top_line;
 
@@ -147,6 +154,44 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
             }
         }
 
+        // Render diagnostic virtual lines after this line (with multi-row wrapping)
+        if let Some(line_diagnostics) = diagnostics_by_line.get(&line_idx) {
+            for diag_info in line_diagnostics {
+                // Calculate how many rows this diagnostic needs
+                let total_rows = git::calculate_diagnostic_rows(
+                    diag_info.start_col,
+                    diag_info.underline_len,
+                    diag_info.code.as_deref(),
+                    &diag_info.message,
+                    content_width,
+                );
+
+                // Render each row of the diagnostic
+                for row_index in 0..total_rows {
+                    if visual_row >= content_height {
+                        break;
+                    }
+                    line_rendering::render_diagnostic_virtual_line(
+                        buf,
+                        area,
+                        visual_row,
+                        diag_info.start_col,
+                        diag_info.underline_len,
+                        diag_info.severity,
+                        diag_info.code.as_deref(),
+                        &diag_info.message,
+                        theme,
+                        line_number_width,
+                        content_width,
+                        0, // No horizontal scroll in word wrap mode
+                        row_index,
+                        total_rows,
+                    );
+                    visual_row += 1;
+                }
+            }
+        }
+
         line_idx += 1;
     }
 
@@ -175,13 +220,15 @@ fn render_empty_line(
     cursor: &Cursor,
     render_context: &mut RenderContext,
 ) {
-    let git_info = git::get_git_line_info(line_idx, git_diff_cache, show_git_diff, theme);
+    let diagnostic_severity = render_context.diagnostic_severity_at_line(line_idx);
+    let line_num_color = git::get_line_number_color(line_idx, git_diff_cache, show_git_diff, theme);
+    let lsp_marker = git::get_lsp_marker(diagnostic_severity, theme);
 
-    // Render line number
-    let line_num_style = Style::default().fg(git_info.status_color);
-    let line_num_part = format!("{:>4}{}", line_idx + 1, git_info.status_marker);
+    // Render line number (4 chars) with git color
+    let line_num_style = Style::default().fg(line_num_color);
+    let line_num_str = format!("{:>4}", line_idx + 1);
 
-    for (i, ch) in line_num_part.chars().enumerate() {
+    for (i, ch) in line_num_str.chars().enumerate() {
         let x = area.x + i as u16;
         let y = area.y + visual_row as u16;
         if let Some(cell) = buf.cell_mut((x, y)) {
@@ -190,12 +237,21 @@ fn render_empty_line(
         }
     }
 
-    // Space after marker
+    // Render LSP marker (position 4) with its own color
+    let marker_style = Style::default().fg(lsp_marker.color);
+    let x = area.x + 4;
+    let y = area.y + visual_row as u16;
+    if let Some(cell) = buf.cell_mut((x, y)) {
+        cell.set_char(lsp_marker.marker);
+        cell.set_style(marker_style);
+    }
+
+    // Space separator (position 5)
     let x = area.x + 5;
     let y = area.y + visual_row as u16;
     if let Some(cell) = buf.cell_mut((x, y)) {
         cell.set_char(' ');
-        cell.set_style(line_num_style);
+        cell.set_style(Style::default());
     }
 
     // Fill line with background
@@ -248,11 +304,16 @@ fn render_visual_line<H: LineHighlighter>(
 ) {
     // Render line number gutter
     if is_first_visual_row {
-        let git_info = git::get_git_line_info(line_idx, git_diff_cache, show_git_diff, theme);
-        let line_num_style = Style::default().fg(git_info.status_color);
-        let line_num_part = format!("{:>4}{}", line_idx + 1, git_info.status_marker);
+        let diagnostic_severity = render_context.diagnostic_severity_at_line(line_idx);
+        let line_num_color =
+            git::get_line_number_color(line_idx, git_diff_cache, show_git_diff, theme);
+        let lsp_marker = git::get_lsp_marker(diagnostic_severity, theme);
 
-        for (i, ch) in line_num_part.chars().enumerate() {
+        // Render line number (4 chars) with git color
+        let line_num_style = Style::default().fg(line_num_color);
+        let line_num_str = format!("{:>4}", line_idx + 1);
+
+        for (i, ch) in line_num_str.chars().enumerate() {
             let x = area.x + i as u16;
             let y = area.y + visual_row as u16;
             if let Some(cell) = buf.cell_mut((x, y)) {
@@ -261,11 +322,21 @@ fn render_visual_line<H: LineHighlighter>(
             }
         }
 
+        // Render LSP marker (position 4) with its own color
+        let marker_style = Style::default().fg(lsp_marker.color);
+        let x = area.x + 4;
+        let y = area.y + visual_row as u16;
+        if let Some(cell) = buf.cell_mut((x, y)) {
+            cell.set_char(lsp_marker.marker);
+            cell.set_style(marker_style);
+        }
+
+        // Space separator (position 5)
         let x = area.x + 5;
         let y = area.y + visual_row as u16;
         if let Some(cell) = buf.cell_mut((x, y)) {
             cell.set_char(' ');
-            cell.set_style(line_num_style);
+            cell.set_style(Style::default());
         }
     } else {
         // Empty gutter for continuation lines
@@ -321,6 +392,8 @@ fn render_visual_line<H: LineHighlighter>(
                             current_match_style,
                             selection_style,
                             theme.accented_bg,
+                            theme.error,
+                            theme.warning,
                         );
                         cell.set_style(final_style);
                     }

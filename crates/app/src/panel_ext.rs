@@ -32,6 +32,7 @@ use std::any::Any;
 
 use termide_core::Panel;
 use termide_modal::ActiveModal;
+use termide_panel_diagnostics::DiagnosticsPanel;
 use termide_panel_editor::Editor;
 use termide_panel_file_manager::FileManager;
 use termide_panel_git_status::GitStatusPanel;
@@ -62,6 +63,8 @@ pub trait PanelExt {
     fn as_terminal_mut(&mut self) -> Option<&mut Terminal>;
     /// Downcast to GitStatusPanel (mutable)
     fn as_git_status_mut(&mut self) -> Option<&mut GitStatusPanel>;
+    /// Downcast to DiagnosticsPanel (mutable)
+    fn as_diagnostics_panel_mut(&mut self) -> Option<&mut DiagnosticsPanel>;
     /// Check if panel is a Journal panel
     fn is_journal(&self) -> bool;
     /// Take modal request from FileManager, Editor, or GitStatusPanel.
@@ -88,6 +91,10 @@ impl PanelExt for dyn Panel {
 
     fn as_git_status_mut(&mut self) -> Option<&mut GitStatusPanel> {
         (self as &mut dyn Any).downcast_mut::<GitStatusPanel>()
+    }
+
+    fn as_diagnostics_panel_mut(&mut self) -> Option<&mut DiagnosticsPanel> {
+        (self as &mut dyn Any).downcast_mut::<DiagnosticsPanel>()
     }
 
     fn is_journal(&self) -> bool {
@@ -128,6 +135,10 @@ impl PanelExt for Box<dyn Panel> {
 
     fn as_git_status_mut(&mut self) -> Option<&mut GitStatusPanel> {
         (**self).as_git_status_mut()
+    }
+
+    fn as_diagnostics_panel_mut(&mut self) -> Option<&mut DiagnosticsPanel> {
+        (**self).as_diagnostics_panel_mut()
     }
 
     fn is_journal(&self) -> bool {

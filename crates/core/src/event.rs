@@ -82,6 +82,13 @@ pub enum PanelEvent {
     /// Open a file in the editor
     OpenFile(PathBuf),
 
+    /// Open a file at specific location (for go-to-definition)
+    OpenFileAt {
+        path: PathBuf,
+        line: usize,
+        column: usize,
+    },
+
     /// Execute file in a new terminal
     ExecuteFile(PathBuf),
 
@@ -218,6 +225,9 @@ pub enum PanelEvent {
 
     /// Request previous panel focus
     PrevPanel,
+
+    /// Open diagnostics panel (e.g., when clicking on diagnostic virtual line)
+    OpenDiagnosticsPanel,
 }
 
 /// Confirmation dialog actions.

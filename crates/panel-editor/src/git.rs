@@ -16,10 +16,16 @@ pub struct GitLineInfo {
     pub status_marker: char,
 }
 
+/// LSP diagnostic marker information for gutter
+pub struct LspMarkerInfo {
+    pub marker: char,
+    pub color: Color,
+}
+
 /// Virtual line representation for rendering.
 ///
-/// Allows inserting visual-only lines (like deletion markers) between real buffer lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Allows inserting visual-only lines (like deletion markers, diagnostics) between real buffer lines.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VirtualLine {
     /// Real line from the buffer at given index (0-based)
     Real(usize),
@@ -28,6 +34,28 @@ pub enum VirtualLine {
     /// Parameters: (after_line_idx, deletion_count)
     /// This is a visual-only line showing where content was deleted and how many lines.
     DeletionMarker(usize, usize),
+    /// Diagnostic virtual line showing error/warning under the affected token.
+    ///
+    /// Row 0: `~~~  [code] message_start`
+    /// Row 1+: `     message_continuation`
+    Diagnostic {
+        /// Buffer line index this diagnostic refers to
+        line: usize,
+        /// Start column of the underline (in the line above)
+        start_col: usize,
+        /// Length of the underline
+        underline_len: usize,
+        /// Diagnostic severity (ERROR, WARNING, etc.)
+        severity: lsp_types::DiagnosticSeverity,
+        /// Diagnostic code (e.g., "E0425")
+        code: Option<String>,
+        /// Diagnostic message
+        message: String,
+        /// Row index within this diagnostic (0 = first row with underline)
+        row_index: usize,
+        /// Total number of rows for this diagnostic
+        total_rows: usize,
+    },
 }
 
 /// Start async git diff update by spawning background thread.
@@ -125,13 +153,124 @@ pub fn check_pending_git_diff_update(
     (false, pending_time) // No update, keep pending time
 }
 
-/// Get git line information for rendering.
-pub fn get_git_line_info(
+/// Get line number color based on git status only.
+///
+/// Returns the color for the line number (not the marker).
+/// - Green for added lines
+/// - Yellow for modified lines
+/// - Default/disabled for unchanged lines
+pub fn get_line_number_color(
     line_idx: usize,
     git_diff_cache: &Option<GitDiffCache>,
     show_git_diff: bool,
     theme: &Theme,
+) -> Color {
+    if !show_git_diff {
+        return theme.disabled;
+    }
+
+    git_diff_cache
+        .as_ref()
+        .map(|cache| {
+            let status = cache.get_line_status(line_idx);
+            match status {
+                LineStatus::Added => theme.success,
+                LineStatus::Modified => theme.warning,
+                LineStatus::Unchanged => theme.disabled,
+                LineStatus::DeletedAfter => theme.disabled,
+            }
+        })
+        .unwrap_or(theme.disabled)
+}
+
+/// Get git status marker (for backward compatibility).
+///
+/// Returns the git status marker character.
+pub fn get_git_status_marker(
+    line_idx: usize,
+    git_diff_cache: &Option<GitDiffCache>,
+    show_git_diff: bool,
+) -> char {
+    if !show_git_diff {
+        return ' ';
+    }
+
+    git_diff_cache
+        .as_ref()
+        .map(|cache| {
+            let status = cache.get_line_status(line_idx);
+            match status {
+                LineStatus::Added => '+',
+                LineStatus::Modified => '~',
+                LineStatus::Unchanged => ' ',
+                LineStatus::DeletedAfter => ' ',
+            }
+        })
+        .unwrap_or(' ')
+}
+
+/// Get LSP diagnostic marker for gutter.
+///
+/// Returns the marker character and color for diagnostic severity.
+/// - ▶ (red) for ERROR
+/// - ▶ (yellow) for WARNING
+/// - ' ' (space) for no diagnostic or INFO/HINT
+pub fn get_lsp_marker(
+    diagnostic_severity: Option<lsp_types::DiagnosticSeverity>,
+    theme: &Theme,
+) -> LspMarkerInfo {
+    if let Some(severity) = diagnostic_severity {
+        use lsp_types::DiagnosticSeverity;
+        match severity {
+            DiagnosticSeverity::ERROR => LspMarkerInfo {
+                marker: '▶',
+                color: theme.error,
+            },
+            DiagnosticSeverity::WARNING => LspMarkerInfo {
+                marker: '▶',
+                color: theme.warning,
+            },
+            _ => LspMarkerInfo {
+                marker: ' ',
+                color: theme.disabled,
+            },
+        }
+    } else {
+        LspMarkerInfo {
+            marker: ' ',
+            color: theme.disabled,
+        }
+    }
+}
+
+/// Get git line information for rendering (DEPRECATED - use get_line_number_color + get_lsp_marker).
+///
+/// If a diagnostic severity is provided and is ERROR or WARNING,
+/// it takes priority over the git status marker.
+#[deprecated(note = "Use get_line_number_color() and get_lsp_marker() separately")]
+pub fn get_git_line_info(
+    line_idx: usize,
+    git_diff_cache: &Option<GitDiffCache>,
+    show_git_diff: bool,
+    diagnostic_severity: Option<lsp_types::DiagnosticSeverity>,
+    theme: &Theme,
 ) -> GitLineInfo {
+    // Diagnostic markers take priority over git markers
+    if let Some(severity) = diagnostic_severity {
+        use lsp_types::DiagnosticSeverity;
+        let (status_color, status_marker) = match severity {
+            DiagnosticSeverity::ERROR => (theme.error, '●'),
+            DiagnosticSeverity::WARNING => (theme.warning, '▲'),
+            DiagnosticSeverity::INFORMATION => (theme.accented_fg, 'ℹ'),
+            DiagnosticSeverity::HINT => (theme.accented_fg, '○'),
+            _ => (theme.accented_fg, '○'),
+        };
+        return GitLineInfo {
+            status_color,
+            status_marker,
+        };
+    }
+
     if !show_git_diff {
         return GitLineInfo {
             status_color: theme.disabled,
@@ -163,37 +302,262 @@ pub fn get_git_line_info(
         })
 }
 
-/// Build list of virtual lines (real buffer lines + deletion marker lines).
+/// Build list of virtual lines (real buffer lines + deletion markers + diagnostics).
 ///
 /// Returns a Vec mapping visual row index to VirtualLine.
+/// Diagnostic virtual lines are inserted after each real line that has diagnostics.
+/// Long diagnostic messages are wrapped across multiple virtual lines.
+///
+/// # Parameters
+/// - `content_width`: Available width for content (used for diagnostic wrapping)
 pub fn build_virtual_lines(
     buffer: &TextBuffer,
     git_diff_cache: &Option<GitDiffCache>,
     show_git_diff: bool,
+    diagnostics: &[lsp_types::Diagnostic],
+    content_width: usize,
 ) -> Vec<VirtualLine> {
     let mut virtual_lines = Vec::new();
     let buffer_line_count = buffer.line_count();
 
-    // If git diff is disabled or not available, just return real lines
-    if !show_git_diff || git_diff_cache.is_none() {
-        for line_idx in 0..buffer_line_count {
-            virtual_lines.push(VirtualLine::Real(line_idx));
-        }
-        return virtual_lines;
-    }
+    // Group diagnostics by line
+    let diagnostics_by_line = group_diagnostics_by_line(diagnostics, buffer);
 
-    let git_diff = git_diff_cache.as_ref().unwrap();
-
-    // Interleave real lines with deletion markers
+    // Build virtual lines
     for line_idx in 0..buffer_line_count {
+        // Add real line first
         virtual_lines.push(VirtualLine::Real(line_idx));
 
-        // Check if there's a deletion marker after this line
-        if git_diff.has_deletion_marker(line_idx) {
-            let deletion_count = git_diff.get_deletion_count(line_idx);
-            virtual_lines.push(VirtualLine::DeletionMarker(line_idx, deletion_count));
+        // Add deletion markers (git)
+        if show_git_diff {
+            if let Some(git_diff) = git_diff_cache.as_ref() {
+                if git_diff.has_deletion_marker(line_idx) {
+                    let deletion_count = git_diff.get_deletion_count(line_idx);
+                    virtual_lines.push(VirtualLine::DeletionMarker(line_idx, deletion_count));
+                }
+            }
+        }
+
+        // Add diagnostic virtual lines for this line
+        if let Some(line_diagnostics) = diagnostics_by_line.get(&line_idx) {
+            for diag_info in line_diagnostics {
+                // Calculate how many rows this diagnostic needs
+                let total_rows = calculate_diagnostic_rows(
+                    diag_info.start_col,
+                    diag_info.underline_len,
+                    diag_info.code.as_deref(),
+                    &diag_info.message,
+                    content_width,
+                );
+
+                // Create virtual line for each row of the diagnostic
+                for row_index in 0..total_rows {
+                    virtual_lines.push(VirtualLine::Diagnostic {
+                        line: line_idx,
+                        start_col: diag_info.start_col,
+                        underline_len: diag_info.underline_len,
+                        severity: diag_info.severity,
+                        code: diag_info.code.clone(),
+                        message: diag_info.message.clone(),
+                        row_index,
+                        total_rows,
+                    });
+                }
+            }
         }
     }
 
     virtual_lines
+}
+
+/// Calculate how many visual rows a diagnostic message needs.
+///
+/// Row 0: `~~~  [code] message_start`
+/// Row 1+: `          message_continuation`
+pub fn calculate_diagnostic_rows(
+    start_col: usize,
+    underline_len: usize,
+    code: Option<&str>,
+    message: &str,
+    content_width: usize,
+) -> usize {
+    use unicode_width::UnicodeWidthStr;
+
+    if content_width == 0 {
+        return 1;
+    }
+
+    // First row format: spaces + ~~~ + [code] + space + message
+    let code_part_len = code.map(|c| c.len() + 3).unwrap_or(0); // " [code]"
+    let first_row_prefix_len = start_col + underline_len + code_part_len + 1; // +1 for space
+
+    if first_row_prefix_len >= content_width {
+        // Not enough space even for prefix, just show 1 row
+        return 1;
+    }
+
+    let msg_width = message.width();
+    let first_row_msg_space = content_width.saturating_sub(first_row_prefix_len);
+
+    if msg_width <= first_row_msg_space {
+        // Message fits on first row
+        return 1;
+    }
+
+    // Calculate continuation rows
+    // Continuation format: indent + message_part
+    let continuation_indent = start_col + 2; // Align with message start (after "~~")
+    let continuation_space = content_width.saturating_sub(continuation_indent);
+
+    if continuation_space == 0 {
+        return 1;
+    }
+
+    let remaining_msg_width = msg_width.saturating_sub(first_row_msg_space);
+    let continuation_rows = remaining_msg_width.div_ceil(continuation_space);
+
+    1 + continuation_rows
+}
+
+/// Info about a single diagnostic for virtual line rendering.
+#[derive(Debug, Clone)]
+pub struct DiagnosticInfo {
+    /// Start column for underline positioning
+    pub start_col: usize,
+    /// Length of the underline
+    pub underline_len: usize,
+    /// Diagnostic severity (ERROR, WARNING, etc.)
+    pub severity: lsp_types::DiagnosticSeverity,
+    /// Diagnostic code (e.g., "E0425")
+    pub code: Option<String>,
+    /// Diagnostic message
+    pub message: String,
+}
+
+/// Group diagnostics by line and compute underline ranges.
+///
+/// Returns a map from line index to list of diagnostics on that line.
+/// Each diagnostic has word-boundary-expanded underline positions.
+/// Deduplicates diagnostics with the same message on the same line.
+pub fn group_diagnostics_by_line(
+    diagnostics: &[lsp_types::Diagnostic],
+    buffer: &TextBuffer,
+) -> std::collections::HashMap<usize, Vec<DiagnosticInfo>> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut result: HashMap<usize, Vec<DiagnosticInfo>> = HashMap::new();
+    // Track seen (line, message) pairs to deduplicate
+    let mut seen: HashSet<(usize, String)> = HashSet::new();
+
+    for diag in diagnostics {
+        let line = diag.range.start.line as usize;
+
+        // Skip duplicate messages on the same line
+        let key = (line, diag.message.clone());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.insert(key);
+
+        let start_col = diag.range.start.character as usize;
+        let end_col = diag.range.end.character as usize;
+
+        // Expand to word boundaries
+        let (word_start, word_end) = if let Some(line_text) = buffer.line(line) {
+            (
+                find_word_start(&line_text, start_col),
+                find_word_end(&line_text, start_col).max(end_col),
+            )
+        } else {
+            (start_col, end_col.max(start_col + 1))
+        };
+
+        let underline_len = word_end.saturating_sub(word_start).max(1);
+        let severity = diag
+            .severity
+            .unwrap_or(lsp_types::DiagnosticSeverity::ERROR);
+
+        // Extract diagnostic code
+        let code = diag.code.as_ref().map(|c| match c {
+            lsp_types::NumberOrString::Number(n) => n.to_string(),
+            lsp_types::NumberOrString::String(s) => s.clone(),
+        });
+
+        result.entry(line).or_default().push(DiagnosticInfo {
+            start_col: word_start,
+            underline_len,
+            severity,
+            code,
+            message: diag.message.clone(),
+        });
+    }
+
+    result
+}
+
+/// Find the start of the word containing the given column.
+fn find_word_start(line: &str, col: usize) -> usize {
+    let chars: Vec<char> = line.chars().collect();
+    if col >= chars.len() {
+        return col;
+    }
+
+    let mut start = col;
+    while start > 0 {
+        let ch = chars[start - 1];
+        if !ch.is_alphanumeric() && ch != '_' {
+            break;
+        }
+        start -= 1;
+    }
+    start
+}
+
+/// Find the end of the word containing the given column.
+fn find_word_end(line: &str, col: usize) -> usize {
+    let chars: Vec<char> = line.chars().collect();
+    if col >= chars.len() {
+        return chars.len();
+    }
+
+    let mut end = col;
+    while end < chars.len() {
+        let ch = chars[end];
+        if !ch.is_alphanumeric() && ch != '_' {
+            break;
+        }
+        end += 1;
+    }
+    end
+}
+
+/// Get the virtual line at a given visual row position.
+///
+/// Returns the virtual line at the specified visual row offset from viewport.top_line.
+/// Returns None if the row is out of bounds.
+pub fn get_virtual_line_at_row(
+    buffer: &TextBuffer,
+    git_diff_cache: &Option<GitDiffCache>,
+    show_git_diff: bool,
+    diagnostics: &[lsp_types::Diagnostic],
+    viewport_top_line: usize,
+    visual_row: usize,
+    content_width: usize,
+) -> Option<VirtualLine> {
+    let virtual_lines = build_virtual_lines(
+        buffer,
+        git_diff_cache,
+        show_git_diff,
+        diagnostics,
+        content_width,
+    );
+
+    // Find index of first virtual line for viewport.top_line
+    let start_virtual_idx = virtual_lines
+        .iter()
+        .position(|vline| matches!(vline, VirtualLine::Real(idx) if *idx >= viewport_top_line))
+        .unwrap_or(virtual_lines.len());
+
+    let target_idx = start_virtual_idx + visual_row;
+    virtual_lines.into_iter().nth(target_idx)
 }

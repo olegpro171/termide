@@ -111,6 +111,9 @@ impl App {
         directory: PathBuf,
         value: Box<dyn std::any::Any>,
     ) -> Result<()> {
+        // Store info needed for LSP notification (before mutable borrow)
+        let mut lsp_info: Option<(String, PathBuf)> = None;
+
         if let Some(filename) = value.downcast_ref::<String>() {
             let t = i18n::t();
             // Get active Editor panel and save file
@@ -125,10 +128,15 @@ impl App {
                     };
                     let display_path = file_path.display().to_string();
 
-                    match editor.save_file_as(file_path) {
+                    match editor.save_file_as(file_path.clone()) {
                         Ok(_) => {
                             termide_logger::info(format!("File saved as: {}", display_path));
                             self.state.set_info(t.status_file_saved(&display_path));
+
+                            // Collect LSP info for didSave notification
+                            if let Some(lang) = editor.lsp_language() {
+                                lsp_info = Some((lang.to_string(), file_path));
+                            }
                         }
                         Err(e) => {
                             termide_logger::error(format!("Save error '{}': {}", display_path, e));
@@ -138,6 +146,14 @@ impl App {
                 }
             }
         }
+
+        // Send LSP didSave notification (triggers full analysis for semantic errors)
+        if let Some((lang, file_path)) = lsp_info {
+            if let Some(ref lsp_manager) = self.state.lsp_manager {
+                lsp_manager.did_save(&lang, &file_path, None);
+            }
+        }
+
         Ok(())
     }
 }

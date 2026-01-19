@@ -155,6 +155,10 @@ pub struct LspSettings {
     #[serde(default = "default_lsp_completion_delay_ms")]
     pub completion_delay_ms: u64,
 
+    /// Delay before showing hover documentation (ms)
+    #[serde(default = "default_lsp_hover_delay_ms")]
+    pub hover_delay_ms: u64,
+
     /// Per-language server configurations
     #[serde(default = "default_lsp_servers")]
     pub servers: std::collections::HashMap<String, LspServerSettings>,
@@ -238,6 +242,10 @@ fn default_lsp_auto_completion() -> bool {
 
 fn default_lsp_completion_delay_ms() -> u64 {
     defaults::LSP_COMPLETION_DELAY_MS
+}
+
+fn default_lsp_hover_delay_ms() -> u64 {
+    defaults::LSP_HOVER_DELAY_MS
 }
 
 fn default_lsp_servers() -> std::collections::HashMap<String, LspServerSettings> {
@@ -415,6 +423,7 @@ impl Default for LspSettings {
             enabled: default_lsp_enabled(),
             auto_completion: default_lsp_auto_completion(),
             completion_delay_ms: default_lsp_completion_delay_ms(),
+            hover_delay_ms: default_lsp_hover_delay_ms(),
             servers: default_lsp_servers(),
         }
     }

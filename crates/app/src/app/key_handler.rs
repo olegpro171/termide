@@ -71,11 +71,14 @@ impl App {
         let (events, modal_request, config_update) =
             if let Some(panel) = self.layout_manager.active_panel_mut() {
                 // handle_key returns Vec<PanelEvent>
-                let events = panel.handle_key(key);
+                let mut events = panel.handle_key(key);
 
                 // Legacy methods still in use
                 let modal_request = panel.take_modal_request();
                 let config_update = if let Some(editor) = panel.as_editor_mut() {
+                    // Cancel hover timer and close popup on any key press
+                    editor.cancel_hover_and_close_popup();
+
                     // Flush pending LSP changes
                     if let Some(ref lsp_manager) = self.state.lsp_manager {
                         editor.flush_lsp_changes(lsp_manager);
@@ -99,6 +102,28 @@ impl App {
 
                     // Poll for completion response
                     editor.poll_completion();
+
+                    // Handle hover request (mouse hover)
+                    if let Some((line, col)) = editor.take_hover_request() {
+                        if let Some(ref lsp_manager) = self.state.lsp_manager {
+                            editor.request_hover(line, col, lsp_manager);
+                        }
+                    }
+
+                    // Poll for hover response
+                    editor.poll_hover();
+
+                    // Handle go-to-definition request (Ctrl+click)
+                    if let Some((line, col)) = editor.take_definition_request() {
+                        if let Some(ref lsp_manager) = self.state.lsp_manager {
+                            editor.request_definition(line, col, lsp_manager);
+                        }
+                    }
+
+                    // Poll for definition response (returns PanelEvent::OpenFileAt)
+                    if let Some(event) = editor.poll_definition() {
+                        events.push(event);
+                    }
 
                     editor.take_config_update()
                 } else {

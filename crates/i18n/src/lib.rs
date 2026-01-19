@@ -208,6 +208,8 @@ pub trait Translation: Send + Sync {
     fn help_desc_accept_completion(&self) -> &str;
     fn help_desc_cancel_completion(&self) -> &str;
     fn help_desc_navigate_completion(&self) -> &str;
+    fn help_desc_show_hover(&self) -> &str;
+    fn help_desc_goto_definition(&self) -> &str;
     fn help_desc_view_file(&self) -> &str;
     fn help_desc_edit_file(&self) -> &str;
     fn help_desc_search_content(&self) -> &str;
@@ -306,6 +308,7 @@ pub trait Translation: Send + Sync {
     fn tools_git_status(&self) -> &str;
     fn tools_git_log(&self) -> &str;
     fn tools_journal(&self) -> &str;
+    fn tools_diagnostics(&self) -> &str;
 
     // Options submenu
     fn options_help(&self) -> &str;

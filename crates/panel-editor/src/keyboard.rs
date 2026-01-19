@@ -107,6 +107,14 @@ pub enum EditorCommand {
     /// Delete last filter character (Backspace when popup open)
     BackspaceCompletion,
 
+    // LSP Hover
+    /// Show hover documentation (Ctrl+K)
+    ShowHover,
+
+    // LSP Go-to-Definition
+    /// Go to definition (F12)
+    GotoDefinition,
+
     // No operation (for unhandled keys)
     None,
 }
@@ -356,6 +364,26 @@ impl EditorCommand {
             KeyModifiers::CONTROL,
         ) {
             return Self::TriggerCompletion;
+        }
+
+        // LSP Hover (configurable, default Ctrl+K)
+        if matches_binding_or_default(
+            &keybindings.show_hover,
+            &key,
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL,
+        ) {
+            return Self::ShowHover;
+        }
+
+        // LSP Go-to-Definition (configurable, default F12)
+        if matches_binding_or_default(
+            &keybindings.goto_definition,
+            &key,
+            KeyCode::F(12),
+            KeyModifiers::NONE,
+        ) {
+            return Self::GotoDefinition;
         }
 
         // Non-configurable bindings (navigation, basic editing)
@@ -697,6 +725,14 @@ impl EditorCommand {
             }
             Self::BackspaceCompletion => {
                 editor.backspace_completion();
+                Ok(())
+            }
+            Self::ShowHover => {
+                editor.request_hover_at_cursor();
+                Ok(())
+            }
+            Self::GotoDefinition => {
+                editor.request_definition_at_cursor();
                 Ok(())
             }
 

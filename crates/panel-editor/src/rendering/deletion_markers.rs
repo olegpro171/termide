@@ -12,7 +12,7 @@ use termide_theme::Theme;
 ///
 /// Displays a visual indicator showing where lines were deleted according to git diff.
 /// The marker includes:
-/// - Gutter: 4 spaces + red ▶ marker + space
+/// - Gutter: 4 spaces + dimmed ▶ marker + space
 /// - Content: horizontal line (─) with centered deletion count text
 pub fn render_deletion_marker(
     buf: &mut Buffer,
@@ -40,7 +40,7 @@ pub fn render_deletion_marker(
 
 /// Render the gutter portion of deletion marker.
 ///
-/// Format: "    ▶ " (4 spaces + red marker + space)
+/// Format: "    ▶ " (4 spaces + dimmed marker + space)
 fn render_deletion_gutter(buf: &mut Buffer, area: Rect, row: usize, theme: &Theme) {
     let y = area.y + row as u16;
 
@@ -53,8 +53,9 @@ fn render_deletion_gutter(buf: &mut Buffer, area: Rect, row: usize, theme: &Them
         }
     }
 
-    // Red marker ▶ (shows deletion occurred here)
-    let marker_style = Style::default().fg(theme.error);
+    // Dimmed marker ▶ (shows deletion occurred here)
+    // Use dimmed color to differentiate from LSP error marker (which uses theme.error)
+    let marker_style = Style::default().fg(theme.disabled);
     let x = area.x + 4; // Position after spaces
     if let Some(cell) = buf.cell_mut((x, y)) {
         cell.set_char('▶');

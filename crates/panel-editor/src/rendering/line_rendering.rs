@@ -51,7 +51,8 @@ pub fn render_line_no_wrap<H: LineHighlighter>(
         text_style
     };
 
-    // Render line number gutter with git status
+    // Render line number gutter with git status (or diagnostic marker if present)
+    let diagnostic_severity = render_context.diagnostic_severity_at_line(line_idx);
     render_line_gutter(
         buf,
         area,
@@ -59,6 +60,7 @@ pub fn render_line_no_wrap<H: LineHighlighter>(
         line_idx,
         git_diff_cache,
         show_git_diff,
+        diagnostic_severity,
         theme,
     );
 
@@ -111,7 +113,13 @@ pub fn render_line_no_wrap<H: LineHighlighter>(
     }
 }
 
-/// Render line number gutter with git status markers.
+/// Render line number gutter with git color and LSP marker.
+///
+/// Format: `1234▶ ` (6 chars total)
+/// - Positions 0-3: line number (color = git status)
+/// - Position 4: LSP marker (▶ for error/warning, space otherwise)
+/// - Position 5: space separator
+#[allow(clippy::too_many_arguments)]
 fn render_line_gutter(
     buf: &mut Buffer,
     area: Rect,
@@ -119,15 +127,18 @@ fn render_line_gutter(
     line_idx: usize,
     git_diff_cache: &Option<GitDiffCache>,
     show_git_diff: bool,
+    diagnostic_severity: Option<lsp_types::DiagnosticSeverity>,
     theme: &Theme,
 ) {
-    let git_info = git::get_git_line_info(line_idx, git_diff_cache, show_git_diff, theme);
+    // Get separate colors for line number and LSP marker
+    let line_num_color = git::get_line_number_color(line_idx, git_diff_cache, show_git_diff, theme);
+    let lsp_marker = git::get_lsp_marker(diagnostic_severity, theme);
 
-    // Render line number (4 chars) + status marker (1 char)
-    let line_num_style = Style::default().fg(git_info.status_color);
-    let line_num_part = format!("{:>4}{}", line_idx + 1, git_info.status_marker);
+    // Render line number (4 chars) with git color
+    let line_num_style = Style::default().fg(line_num_color);
+    let line_num_str = format!("{:>4}", line_idx + 1);
 
-    for (i, ch) in line_num_part.chars().enumerate() {
+    for (i, ch) in line_num_str.chars().enumerate() {
         let x = area.x + i as u16;
         let y = area.y + row as u16;
         if let Some(cell) = buf.cell_mut((x, y)) {
@@ -136,12 +147,21 @@ fn render_line_gutter(
         }
     }
 
-    // Render space after marker (deletion markers are now virtual lines)
+    // Render LSP marker (position 4) with its own color
+    let marker_style = Style::default().fg(lsp_marker.color);
+    let x = area.x + 4;
+    let y = area.y + row as u16;
+    if let Some(cell) = buf.cell_mut((x, y)) {
+        cell.set_char(lsp_marker.marker);
+        cell.set_style(marker_style);
+    }
+
+    // Render space separator (position 5)
     let x = area.x + 5;
     let y = area.y + row as u16;
     if let Some(cell) = buf.cell_mut((x, y)) {
         cell.set_char(' ');
-        cell.set_style(line_num_style);
+        cell.set_style(Style::default());
     }
 }
 
@@ -286,6 +306,8 @@ fn render_line_regular<H: LineHighlighter>(
                             current_match_style,
                             selection_style,
                             theme.accented_bg,
+                            theme.error,
+                            theme.warning,
                         );
                         cell.set_style(final_style);
                     }
@@ -409,6 +431,8 @@ fn render_line_with_inline_diff<H: LineHighlighter>(
                                 current_match_style,
                                 selection_style,
                                 theme.accented_bg,
+                                theme.error,
+                                theme.warning,
                             );
                             // If unchanged and no highlight, apply diff style if inserted
                             if change_type == InlineChangeType::Inserted
@@ -467,10 +491,248 @@ fn fill_line_remainder(
     }
 }
 
+/// Render a diagnostic virtual line.
+///
+/// Format for row 0: `     │~~~  [E0425] error message start`
+/// Format for row 1+: `     │      message continuation`
+///
+/// - Empty gutter (no line number)
+/// - Row 0: Wavy underline + diagnostic code + message start
+/// - Row 1+: Indented message continuation
+///
+/// Used by both no-wrap and word-wrap rendering modes.
+#[allow(clippy::too_many_arguments)]
+pub fn render_diagnostic_virtual_line(
+    buf: &mut Buffer,
+    area: Rect,
+    row: usize,
+    start_col: usize,
+    underline_len: usize,
+    severity: lsp_types::DiagnosticSeverity,
+    code: Option<&str>,
+    message: &str,
+    theme: &Theme,
+    line_number_width: u16,
+    content_width: usize,
+    left_column: usize,
+    row_index: usize,
+    _total_rows: usize,
+) {
+    use lsp_types::DiagnosticSeverity;
+
+    if row >= area.height as usize {
+        return;
+    }
+
+    let y = area.y + row as u16;
+
+    // Get severity color
+    let severity_color = match severity {
+        DiagnosticSeverity::ERROR => theme.error,
+        DiagnosticSeverity::WARNING => theme.warning,
+        DiagnosticSeverity::INFORMATION => theme.accented_fg,
+        DiagnosticSeverity::HINT => theme.disabled,
+        _ => theme.disabled,
+    };
+
+    let style = Style::default().fg(severity_color);
+
+    // Render empty gutter (spaces for line number area)
+    let gutter_x = area.x;
+    for i in 0..line_number_width {
+        if let Some(cell) = buf.cell_mut((gutter_x + i, y)) {
+            cell.set_char(' ');
+            cell.set_style(Style::default().fg(theme.disabled));
+        }
+    }
+
+    // Content starts after gutter
+    let content_x = area.x + line_number_width;
+
+    let full_text = if row_index == 0 {
+        // First row: underline + code + message start
+        render_diagnostic_first_row(start_col, underline_len, code, message, content_width)
+    } else {
+        // Continuation row: indented message part
+        render_diagnostic_continuation_row(
+            start_col,
+            underline_len,
+            code,
+            message,
+            content_width,
+            row_index,
+        )
+    };
+
+    // Render visible portion (accounting for horizontal scroll)
+    let visible_start = left_column;
+    let visible_chars: String = full_text
+        .chars()
+        .skip(visible_start)
+        .take(content_width)
+        .collect();
+
+    for (i, ch) in visible_chars.chars().enumerate() {
+        let x = content_x + i as u16;
+        if x < area.x + area.width {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_char(ch);
+                cell.set_style(style);
+            }
+        }
+    }
+}
+
+/// Render the first row of a diagnostic (underline + code + message start).
+fn render_diagnostic_first_row(
+    start_col: usize,
+    underline_len: usize,
+    code: Option<&str>,
+    message: &str,
+    content_width: usize,
+) -> String {
+    let wavy = "~".repeat(underline_len);
+    let code_part = code.map(|c| format!(" [{}]", c)).unwrap_or_default();
+
+    // Calculate prefix length
+    let prefix_len = start_col + underline_len + code_part.len() + 1; // +1 for space before message
+
+    if content_width > prefix_len {
+        let available_for_msg = content_width - prefix_len;
+        let msg_part = get_message_part(message, 0, available_for_msg);
+        format!(
+            "{}{}{} {}",
+            " ".repeat(start_col),
+            wavy,
+            code_part,
+            msg_part
+        )
+    } else if content_width > start_col + underline_len {
+        // Only show underline and partial code
+        let available = content_width.saturating_sub(start_col + underline_len);
+        let truncated_code = truncate_to_width(&code_part, available);
+        format!("{}{}{}", " ".repeat(start_col), wavy, truncated_code)
+    } else if content_width > start_col {
+        // Only show partial underline
+        let available = content_width.saturating_sub(start_col);
+        format!(
+            "{}{}",
+            " ".repeat(start_col),
+            "~".repeat(available.min(underline_len))
+        )
+    } else {
+        // Show what we can from the start
+        "~".repeat(content_width.min(underline_len))
+    }
+}
+
+/// Render a continuation row of a diagnostic (indented message part).
+fn render_diagnostic_continuation_row(
+    start_col: usize,
+    underline_len: usize,
+    code: Option<&str>,
+    message: &str,
+    content_width: usize,
+    row_index: usize,
+) -> String {
+    // Calculate where message continuation should start (aligned with first row message)
+    let continuation_indent = start_col + 2; // Align nicely after underline start
+    let continuation_space = content_width.saturating_sub(continuation_indent);
+
+    if continuation_space == 0 {
+        return String::new();
+    }
+
+    // Calculate how much of the message was shown on previous rows
+    let code_part_len = code.map(|c| c.len() + 3).unwrap_or(0);
+    let first_row_prefix_len = start_col + underline_len + code_part_len + 1;
+    let first_row_msg_space = content_width.saturating_sub(first_row_prefix_len);
+
+    // Calculate char offset for this row
+    let chars_before_this_row = if row_index == 1 {
+        first_row_msg_space
+    } else {
+        first_row_msg_space + (row_index - 1) * continuation_space
+    };
+
+    let msg_part = get_message_part(message, chars_before_this_row, continuation_space);
+
+    if msg_part.is_empty() {
+        return String::new();
+    }
+
+    format!("{}{}", " ".repeat(continuation_indent), msg_part)
+}
+
+/// Get a part of message starting at char_offset, fitting within max_width.
+fn get_message_part(message: &str, char_offset: usize, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+
+    // Skip to char_offset
+    let remaining: String = message.chars().skip(char_offset).collect();
+
+    if remaining.is_empty() {
+        return String::new();
+    }
+
+    // Take up to max_width display width
+    let mut result = String::new();
+    let mut current_width = 0;
+
+    for ch in remaining.chars() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+        if current_width + ch_width > max_width {
+            break;
+        }
+        result.push(ch);
+        current_width += ch_width;
+    }
+
+    result
+}
+
+/// Truncate a string to fit within a given display width.
+///
+/// If truncation is needed, appends '…' and returns a string that fits.
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+
+    if s.width() <= max_width {
+        return s.to_string();
+    }
+
+    if max_width == 0 {
+        return String::new();
+    }
+
+    if max_width == 1 {
+        return "…".to_string();
+    }
+
+    // Leave room for ellipsis
+    let target_width = max_width - 1;
+    let mut result = String::new();
+    let mut current_width = 0;
+
+    for ch in s.chars() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+        if current_width + ch_width > target_width {
+            break;
+        }
+        result.push(ch);
+        current_width += ch_width;
+    }
+
+    result.push('…');
+    result
+}
+
 /// Render editor content in no-wrap mode with virtual lines.
 ///
 /// This is the main rendering function for no-wrap mode that handles:
-/// - Virtual lines (real lines + deletion markers)
+/// - Virtual lines (real lines + deletion markers + diagnostics)
 /// - Horizontal scrolling
 /// - Cursor positioning accounting for virtual lines
 #[allow(clippy::too_many_arguments)]
@@ -485,6 +747,7 @@ pub fn render_content_no_wrap<H: LineHighlighter>(
     syntax_highlighting_enabled: bool,
     highlight_cache: &mut H,
     render_context: &RenderContext,
+    diagnostics: &[lsp_types::Diagnostic],
     theme: &Theme,
     content_width: usize,
     content_height: usize,
@@ -495,8 +758,14 @@ pub fn render_content_no_wrap<H: LineHighlighter>(
     current_match_style: Style,
     selection_style: Style,
 ) {
-    // Build list of virtual lines (real buffer lines + deletion markers)
-    let virtual_lines = git::build_virtual_lines(buffer, git_diff_cache, show_git_diff);
+    // Build list of virtual lines (real buffer lines + deletion markers + diagnostics)
+    let virtual_lines = git::build_virtual_lines(
+        buffer,
+        git_diff_cache,
+        show_git_diff,
+        diagnostics,
+        content_width,
+    );
 
     // Find index of first virtual line for viewport.top_line
     let start_virtual_idx = virtual_lines
@@ -512,21 +781,21 @@ pub fn render_content_no_wrap<H: LineHighlighter>(
             break;
         }
 
-        let virtual_line = virtual_lines[virtual_idx];
+        let virtual_line = &virtual_lines[virtual_idx];
 
         // Handle different types of virtual lines
         match virtual_line {
             git::VirtualLine::Real(line_idx) => {
                 // Render real line - use line_cow for zero-copy when possible
-                if let Some(line_text) = buffer.line_cow(line_idx) {
+                if let Some(line_text) = buffer.line_cow(*line_idx) {
                     let line_text = line_text.trim_end_matches('\n');
-                    let is_cursor_line = line_idx == cursor.line;
+                    let is_cursor_line = *line_idx == cursor.line;
 
                     render_line_no_wrap(
                         buf,
                         area,
                         row,
-                        line_idx,
+                        *line_idx,
                         line_text,
                         is_cursor_line,
                         text_style,
@@ -552,10 +821,38 @@ pub fn render_content_no_wrap<H: LineHighlighter>(
                     buf,
                     area,
                     row,
-                    deletion_count,
+                    *deletion_count,
                     theme,
                     content_width,
                     line_number_width,
+                );
+            }
+            git::VirtualLine::Diagnostic {
+                start_col,
+                underline_len,
+                severity,
+                code,
+                message,
+                row_index,
+                total_rows,
+                ..
+            } => {
+                // Render diagnostic virtual line
+                render_diagnostic_virtual_line(
+                    buf,
+                    area,
+                    row,
+                    *start_col,
+                    *underline_len,
+                    *severity,
+                    code.as_deref(),
+                    message,
+                    theme,
+                    line_number_width,
+                    content_width,
+                    viewport.left_column,
+                    *row_index,
+                    *total_rows,
                 );
             }
         }

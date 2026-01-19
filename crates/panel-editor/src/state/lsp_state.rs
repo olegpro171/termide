@@ -15,6 +15,7 @@ use ratatui::layout::Rect;
 use termide_lsp::{CompletionTriggerKind, LspManager};
 
 use crate::completion_popup::CompletionPopup;
+use crate::hover_popup::HoverPopup;
 
 /// LSP state for a single editor instance.
 pub struct LspState {
@@ -66,6 +67,31 @@ pub struct LspState {
 
     /// Status text to display next to spinner (e.g., "starting", "indexing")
     pub server_status_text: Option<String>,
+
+    // === Hover/Diagnostic popup state ===
+    /// Active hover popup (if any)
+    pub hover_popup: Option<HoverPopup>,
+
+    /// Rect for hover popup mouse hit testing
+    pub hover_popup_rect: Option<Rect>,
+
+    /// Pending Ctrl+Click position (screen x, y) for popup placement
+    pub pending_ctrl_click: Option<(u16, u16)>,
+
+    /// Pending hover request (line, column) - set by mouse hover timer, consumed by tick
+    pub pending_hover_request: Option<(usize, usize)>,
+
+    /// Pending definition request (line, column) - set by Ctrl+click, consumed by tick
+    pub pending_definition_request: Option<(usize, usize)>,
+
+    /// Timer for hover delay (None if not scheduled)
+    pub hover_timer: Option<std::time::Instant>,
+
+    /// Mouse position (line, col) for scheduled hover request
+    pub hover_scheduled_position: Option<(usize, usize)>,
+
+    /// Last known mouse screen position (for tracking movement)
+    pub last_mouse_position: Option<(u16, u16)>,
 }
 
 impl LspState {
@@ -88,6 +114,14 @@ impl LspState {
             completion_timer: None,
             last_inserted_char: None,
             server_status_text: None,
+            hover_popup: None,
+            hover_popup_rect: None,
+            pending_ctrl_click: None,
+            pending_hover_request: None,
+            pending_definition_request: None,
+            hover_timer: None,
+            hover_scheduled_position: None,
+            last_mouse_position: None,
         }
     }
 
@@ -130,6 +164,33 @@ impl LspState {
             }
         }
         false
+    }
+
+    /// Schedule hover request to trigger after delay.
+    pub fn schedule_hover(&mut self, line: usize, col: usize, screen_x: u16, screen_y: u16) {
+        if self.enabled && !self.server_loading {
+            self.hover_timer = Some(std::time::Instant::now());
+            self.hover_scheduled_position = Some((line, col));
+            self.last_mouse_position = Some((screen_x, screen_y));
+        }
+    }
+
+    /// Cancel scheduled hover request.
+    pub fn cancel_hover_timer(&mut self) {
+        self.hover_timer = None;
+        self.hover_scheduled_position = None;
+    }
+
+    /// Check if hover timer has expired and should trigger.
+    /// Returns Some((line, col)) if hover should be requested now.
+    pub fn check_hover_timer(&mut self, delay_ms: u64) -> Option<(usize, usize)> {
+        if let Some(start) = self.hover_timer {
+            if start.elapsed().as_millis() >= delay_ms as u128 {
+                self.hover_timer = None;
+                return self.hover_scheduled_position.take();
+            }
+        }
+        None
     }
 
     /// Initialize LSP for a file path.
@@ -350,6 +411,67 @@ impl LspState {
             .iter()
             .filter(|d| d.severity == Some(DiagnosticSeverity::WARNING))
             .count()
+    }
+
+    /// Get the most severe diagnostic severity at a specific line.
+    ///
+    /// Returns the most severe (ERROR > WARNING > INFO > HINT) diagnostic
+    /// severity for the given line, used for gutter marker display.
+    pub fn diagnostic_severity_at_line(
+        &self,
+        line: usize,
+    ) -> Option<lsp_types::DiagnosticSeverity> {
+        use lsp_types::DiagnosticSeverity;
+
+        self.diagnostics
+            .iter()
+            .filter(|d| d.range.start.line as usize == line)
+            .filter_map(|d| d.severity)
+            .min_by_key(|s| match *s {
+                DiagnosticSeverity::ERROR => 0,
+                DiagnosticSeverity::WARNING => 1,
+                DiagnosticSeverity::INFORMATION => 2,
+                DiagnosticSeverity::HINT => 3,
+                _ => 4,
+            })
+    }
+
+    /// Get all diagnostics that overlap with a specific position.
+    ///
+    /// Used for showing diagnostic popup on Ctrl+click.
+    pub fn diagnostics_at_position(&self, line: usize, column: usize) -> Vec<&Diagnostic> {
+        self.diagnostics
+            .iter()
+            .filter(|d| {
+                let range = &d.range;
+                let start_line = range.start.line as usize;
+                let end_line = range.end.line as usize;
+                let start_col = range.start.character as usize;
+                let end_col = range.end.character as usize;
+
+                if line < start_line || line > end_line {
+                    return false;
+                }
+
+                if start_line == end_line {
+                    // Single line diagnostic
+                    // Handle zero-width ranges (start == end) by expanding to at least 1 character
+                    let effective_end_col = if end_col <= start_col {
+                        start_col + 1
+                    } else {
+                        end_col
+                    };
+                    column >= start_col && column < effective_end_col
+                } else if line == start_line {
+                    column >= start_col
+                } else if line == end_line {
+                    column < end_col
+                } else {
+                    // Middle line of multi-line diagnostic
+                    true
+                }
+            })
+            .collect()
     }
 }
 

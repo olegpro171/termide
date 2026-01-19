@@ -17,7 +17,7 @@ use termide_ui::ScrollBar;
 use crate::{
     clipboard, completion_popup,
     config::*,
-    constants, cursor, file_io, git, keyboard, rendering, search, selection,
+    constants, cursor, file_io, git, hover_popup, keyboard, rendering, search, selection,
     state::{FileState, GitIntegration, InputState, LspState, RenderingCache, SearchController},
     text_editing, word_wrap,
 };
@@ -377,6 +377,16 @@ impl Editor {
         }
     }
 
+    /// Check if hover was requested (via mouse hover) and clear the flag.
+    pub fn take_hover_request(&mut self) -> Option<(usize, usize)> {
+        self.lsp.pending_hover_request.take()
+    }
+
+    /// Check if go-to-definition was requested (via Ctrl+click) and clear the flag.
+    pub fn take_definition_request(&mut self) -> Option<(usize, usize)> {
+        self.lsp.pending_definition_request.take()
+    }
+
     /// Request completion from LSP at current cursor position.
     pub fn request_completion(&mut self, lsp_manager: &LspManager) {
         if let Some(path) = self.buffer.file_path() {
@@ -389,6 +399,78 @@ impl Editor {
                 lsp_manager,
             );
         }
+    }
+
+    /// Request hover info from LSP at specified position.
+    pub fn request_hover(&mut self, line: usize, column: usize, lsp_manager: &LspManager) {
+        if let Some(path) = self.buffer.file_path() {
+            self.lsp.request_hover(path, line, column, lsp_manager);
+        }
+    }
+
+    /// Request hover info at the current cursor position.
+    ///
+    /// This schedules a hover request that will be processed in tick() where LspManager is available.
+    pub fn request_hover_at_cursor(&mut self) {
+        // Close any existing hover popup first
+        self.close_hover_popup();
+        // Store cursor position for hover request
+        self.lsp.pending_hover_request = Some((self.cursor.line, self.cursor.column));
+    }
+
+    /// Request go-to-definition at cursor position.
+    ///
+    /// This schedules a definition request that will be processed in tick() where LspManager is available.
+    pub fn request_definition_at_cursor(&mut self) {
+        // Store cursor position for definition request
+        self.lsp.pending_definition_request = Some((self.cursor.line, self.cursor.column));
+    }
+
+    /// Request go-to-definition from LSP at specified position.
+    pub fn request_definition(&mut self, line: usize, column: usize, lsp_manager: &LspManager) {
+        if let Some(path) = self.buffer.file_path() {
+            self.lsp.request_definition(path, line, column, lsp_manager);
+        }
+    }
+
+    /// Poll for definition response and convert to PanelEvent.
+    ///
+    /// Returns `Some(PanelEvent::OpenFileAt)` if a definition location was received.
+    pub fn poll_definition(&mut self) -> Option<PanelEvent> {
+        use lsp_types::GotoDefinitionResponse;
+        use std::path::PathBuf;
+
+        let response = self.lsp.poll_definition()?;
+
+        // Extract location from response (take first if multiple)
+        let (uri, position) = match response {
+            GotoDefinitionResponse::Scalar(location) => (location.uri, location.range.start),
+            GotoDefinitionResponse::Array(locations) => {
+                let loc = locations.into_iter().next()?;
+                (loc.uri, loc.range.start)
+            }
+            GotoDefinitionResponse::Link(links) => {
+                let link = links.into_iter().next()?;
+                (link.target_uri, link.target_selection_range.start)
+            }
+        };
+
+        // Convert file:// URI to PathBuf
+        let uri_str = uri.as_str();
+        if !uri_str.starts_with("file://") {
+            return None;
+        }
+        let path_str = &uri_str[7..]; // Skip "file://"
+        #[cfg(unix)]
+        let path = PathBuf::from(path_str);
+        #[cfg(windows)]
+        let path = PathBuf::from(path_str.trim_start_matches('/'));
+
+        // LSP uses 0-based line/column
+        let line = position.line as usize;
+        let column = position.character as usize;
+
+        Some(PanelEvent::OpenFileAt { path, line, column })
     }
 
     /// Poll for completion response and show popup if available.
@@ -406,6 +488,35 @@ impl Editor {
                 self.lsp.completion_popup = Some(popup);
             }
         }
+    }
+
+    /// Poll for hover response and show popup if available.
+    pub fn poll_hover(&mut self) {
+        if let Some(response) = self.lsp.poll_hover() {
+            if let Some(popup) = hover_popup::HoverPopup::from_hover(response) {
+                self.lsp.hover_popup = Some(popup);
+            }
+        }
+    }
+
+    /// Close hover popup.
+    pub fn close_hover_popup(&mut self) {
+        self.lsp.hover_popup = None;
+        self.lsp.hover_popup_rect = None;
+        self.lsp.pending_ctrl_click = None;
+    }
+
+    /// Cancel hover timer and close popup.
+    ///
+    /// Call this on any key press to cancel pending hover requests.
+    pub fn cancel_hover_and_close_popup(&mut self) {
+        self.lsp.cancel_hover_timer();
+        self.close_hover_popup();
+    }
+
+    /// Update diagnostics from LSP.
+    pub fn update_diagnostics(&mut self, diagnostics: Vec<lsp_types::Diagnostic>) {
+        self.lsp.update_diagnostics(diagnostics);
     }
 
     /// Get the prefix text for completion (from trigger column to cursor).
@@ -509,6 +620,11 @@ impl Editor {
     /// Check if completion popup is open.
     pub fn has_completion_popup(&self) -> bool {
         self.lsp.completion_popup.is_some()
+    }
+
+    /// Check if hover popup is open.
+    pub fn has_hover_popup(&self) -> bool {
+        self.lsp.hover_popup.is_some()
     }
 
     /// Check if LSP server is loading (for spinner display).
@@ -621,6 +737,25 @@ impl Editor {
 
         if self.lsp.check_completion_timer(delay_ms) {
             self.trigger_completion_with_kind(lsp_manager, CompletionTriggerKind::INVOKED, None);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check and trigger delayed hover request if timer expired.
+    ///
+    /// Call this periodically (e.g., in tick/poll).
+    /// Returns true if hover was requested.
+    pub fn check_hover_timer(&mut self, lsp_manager: &LspManager, delay_ms: u64) -> bool {
+        // Don't trigger if hover popup is already open
+        if self.lsp.hover_popup.is_some() {
+            self.lsp.cancel_hover_timer();
+            return false;
+        }
+
+        if let Some((line, col)) = self.lsp.check_hover_timer(delay_ms) {
+            self.request_hover(line, col, lsp_manager);
             true
         } else {
             false
@@ -876,6 +1011,21 @@ impl Editor {
         self.cursor.column = 0;
     }
 
+    /// Go to specific position (for go-to-definition).
+    pub fn goto_position(&mut self, line: usize, column: usize) {
+        let max_line = self.buffer.line_count().saturating_sub(1);
+        let target_line = line.min(max_line);
+
+        let line_len = self.buffer.line_len_graphemes(target_line);
+        let target_col = column.min(line_len);
+
+        self.cursor = Cursor::at(target_line, target_col);
+        self.selection = None;
+
+        // Center the view on the target line
+        self.scroll_follows_cursor = true;
+    }
+
     /// Render with custom highlighter (for LogViewer).
     pub fn render_with_highlighter<H: termide_highlight::LineHighlighter>(
         &mut self,
@@ -930,6 +1080,7 @@ impl Editor {
             highlighter,
             &self.search.state,
             &self.selection,
+            &self.lsp.diagnostics,
             theme,
             config.editor.show_git_diff,
             self.config.word_wrap,
@@ -1635,9 +1786,12 @@ impl Editor {
         }
     }
 
-    /// Get the total count of virtual lines (real buffer lines + deletion marker lines + word wrap)
-    /// This is used for viewport calculations to account for deletion markers and word wrapping
+    /// Get the total count of virtual lines (real buffer lines + deletion marker lines + diagnostics + word wrap)
+    /// This is used for viewport calculations to account for deletion markers, diagnostics, and word wrapping
     fn virtual_line_count(&self, config: &Config) -> usize {
+        // Count diagnostic virtual lines
+        let diagnostic_line_count = self.lsp.diagnostics.len();
+
         // If word wrap is enabled, count visual rows instead of buffer lines
         if self.should_use_visual_movement() {
             // Use calculate_total_visual_rows which accounts for word wrapping
@@ -1649,16 +1803,21 @@ impl Editor {
             );
 
             // Add deletion markers if git diff is shown (O(1) lookup)
-            if config.editor.show_git_diff {
-                if let Some(git_diff) = &self.git.diff_cache {
-                    return total_visual_rows + git_diff.deletion_marker_count();
-                }
-            }
+            let deletion_markers = if config.editor.show_git_diff {
+                self.git
+                    .diff_cache
+                    .as_ref()
+                    .map(|cache| cache.deletion_marker_count())
+                    .unwrap_or(0)
+            } else {
+                0
+            };
 
-            return total_visual_rows;
+            // Note: diagnostic virtual lines not yet supported in word wrap mode
+            return total_visual_rows + deletion_markers;
         }
 
-        // No word wrap - use old logic with buffer lines + deletion markers
+        // No word wrap - use buffer lines + deletion markers + diagnostics
         let buffer_line_count = self.buffer.line_count();
         let deletion_marker_count = if config.editor.show_git_diff {
             self.git
@@ -1670,7 +1829,7 @@ impl Editor {
             0
         };
 
-        buffer_line_count + deletion_marker_count
+        buffer_line_count + deletion_marker_count + diagnostic_line_count
     }
 
     /// Render editor content
@@ -1735,6 +1894,7 @@ impl Editor {
             &mut self.render_cache.highlight,
             &self.search.state,
             &self.selection,
+            &self.lsp.diagnostics,
             theme,
             config.editor.show_git_diff,
             self.config.word_wrap,
@@ -1794,6 +1954,18 @@ impl Editor {
             }
         } else {
             self.lsp.popup_rect = None;
+        }
+
+        // Render hover popup if active
+        if let Some(ref popup) = self.lsp.hover_popup {
+            // Use stored mouse position for popup placement
+            if let Some((mouse_x, mouse_y)) = self.lsp.last_mouse_position {
+                self.lsp.hover_popup_rect = popup.render(buf, area, mouse_x, mouse_y, theme);
+            } else {
+                self.lsp.hover_popup_rect = None;
+            }
+        } else {
+            self.lsp.hover_popup_rect = None;
         }
     }
 
@@ -2006,20 +2178,22 @@ impl Editor {
         Ok(count)
     }
 
-    /// Prepare for navigation: close search, clear selection, and close completion popup.
+    /// Prepare for navigation: close search, clear selection, and close popups.
     fn prepare_for_navigation(&mut self) {
         self.close_search();
         self.selection = None;
-        // Close completion popup on cursor movement
+        // Close popups on cursor movement
         self.lsp.completion_popup = None;
+        self.close_hover_popup();
     }
 
-    /// Prepare for navigation with selection: close search, start/extend selection, and close completion popup.
+    /// Prepare for navigation with selection: close search, start/extend selection, and close popups.
     fn prepare_for_navigation_with_selection(&mut self) {
         self.close_search();
         self.start_or_extend_selection();
-        // Close completion popup on cursor movement
+        // Close popups on cursor movement
         self.lsp.completion_popup = None;
+        self.close_hover_popup();
     }
 
     /// Handle backspace/delete key with selection awareness.
@@ -2369,6 +2543,20 @@ impl Panel for Editor {
         // Any keyboard input should make viewport follow cursor again
         self.scroll_follows_cursor = true;
 
+        // Close hover popups on any key press
+        // For Escape, just close the popup and don't process further if one was open
+        let had_popup = self.lsp.hover_popup.is_some() || self.lsp.completion_popup.is_some();
+        self.close_hover_popup();
+
+        if had_popup && key.code == crossterm::event::KeyCode::Esc {
+            // Close completion popup if open
+            if self.lsp.completion_popup.is_some() {
+                self.cancel_completion();
+            }
+            // Just close the popup, don't trigger other Escape actions
+            return vec![];
+        }
+
         // Note: Key translation should be done at app level before calling handle_key
         // If you need translation, call translate_hotkey from termide-core or keyboard module
 
@@ -2408,64 +2596,89 @@ impl Panel for Editor {
         mouse: crossterm::event::MouseEvent,
         panel_area: Rect,
     ) -> Vec<PanelEvent> {
-        use crossterm::event::{MouseButton, MouseEventKind};
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
 
         // Handle completion popup mouse interactions first
-        if let Some(popup_rect) = self.lsp.popup_rect {
-            let in_popup = mouse.column >= popup_rect.x
-                && mouse.column < popup_rect.x + popup_rect.width
-                && mouse.row >= popup_rect.y
-                && mouse.row < popup_rect.y + popup_rect.height;
-
-            match mouse.kind {
-                MouseEventKind::ScrollUp if in_popup => {
-                    if let Some(ref mut popup) = self.lsp.completion_popup {
-                        popup.scroll_up(3);
-                    }
-                    return vec![];
-                }
-                MouseEventKind::ScrollDown if in_popup => {
-                    if let Some(ref mut popup) = self.lsp.completion_popup {
-                        popup.scroll_down(3);
-                    }
-                    return vec![];
-                }
-                MouseEventKind::Down(MouseButton::Left) if in_popup => {
-                    // Click inside popup - select and accept
-                    let row = (mouse.row - popup_rect.y) as usize;
-                    if let Some(ref mut popup) = self.lsp.completion_popup {
-                        popup.select_at_row(row);
-                    }
-                    // Accept the selected completion
-                    self.accept_completion();
-                    self.lsp.popup_rect = None;
-                    // Skip the following MouseUp to prevent cursor jump
-                    self.input.click_tracker.skip_next_up = true;
-                    return vec![];
-                }
-                MouseEventKind::Down(MouseButton::Left) if !in_popup => {
-                    // Click outside popup - close it and continue with normal handling
-                    self.lsp.completion_popup = None;
-                    self.lsp.popup_rect = None;
-                    // Fall through to normal mouse handling
-                }
-                _ => {}
-            }
-        }
-
+        // Handle scroll - if any popup is open, scroll always scrolls popup
         match mouse.kind {
             MouseEventKind::ScrollUp => {
+                // Priority: completion popup > hover popup > editor
+                if let Some(ref mut popup) = self.lsp.completion_popup {
+                    popup.scroll_up(3);
+                    return vec![];
+                }
+                if let Some(ref mut popup) = self.lsp.hover_popup {
+                    popup.scroll_up(3);
+                    return vec![];
+                }
+                // No popup - scroll editor
                 self.viewport.scroll_up(3);
                 self.scroll_follows_cursor = false;
                 return vec![];
             }
             MouseEventKind::ScrollDown => {
+                // Priority: completion popup > hover popup > editor
+                if let Some(ref mut popup) = self.lsp.completion_popup {
+                    popup.scroll_down(3);
+                    return vec![];
+                }
+                if let Some(ref mut popup) = self.lsp.hover_popup {
+                    popup.scroll_down(3);
+                    return vec![];
+                }
+                // No popup - scroll editor
                 self.viewport
                     .scroll_down(3, self.render_cache.virtual_line_count);
                 self.scroll_follows_cursor = false;
                 return vec![];
             }
             _ => {}
+        }
+
+        // Handle completion popup click
+        if let Some(popup_rect) = self.lsp.popup_rect {
+            let in_popup = mouse.column >= popup_rect.x
+                && mouse.column < popup_rect.x + popup_rect.width
+                && mouse.row >= popup_rect.y
+                && mouse.row < popup_rect.y + popup_rect.height;
+
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                if in_popup {
+                    // Click inside popup - select and accept
+                    let row = (mouse.row - popup_rect.y) as usize;
+                    if let Some(ref mut popup) = self.lsp.completion_popup {
+                        popup.select_at_row(row);
+                    }
+                    self.accept_completion();
+                    self.lsp.popup_rect = None;
+                    self.input.click_tracker.skip_next_up = true;
+                    return vec![];
+                } else {
+                    // Click outside popup - close it
+                    self.lsp.completion_popup = None;
+                    self.lsp.popup_rect = None;
+                    // Fall through to normal mouse handling
+                }
+            }
+        }
+
+        // Handle hover popup click
+        if let Some(popup_rect) = self.lsp.hover_popup_rect {
+            let in_popup = mouse.column >= popup_rect.x
+                && mouse.column < popup_rect.x + popup_rect.width
+                && mouse.row >= popup_rect.y
+                && mouse.row < popup_rect.y + popup_rect.height;
+
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                if in_popup {
+                    // Click inside hover popup - do nothing (allow selection of text in future)
+                    return vec![];
+                } else {
+                    // Click outside popup - close it
+                    self.close_hover_popup();
+                    // Fall through to normal mouse handling
+                }
+            }
         }
 
         let inner = Rect {
@@ -2491,25 +2704,82 @@ impl Panel for Editor {
         let rel_x = (mouse.column - content_x) as usize;
         let rel_y = (mouse.row - content_y) as usize;
 
-        let (buffer_line, wrapped_offset, chunk_end) = if self.config.word_wrap {
-            word_wrap::visual_row_to_buffer_position(
+        // Map visual row to buffer line, accounting for diagnostic virtual lines
+        let (buffer_line, wrapped_offset, chunk_end, is_virtual_line) = if self.config.word_wrap {
+            // In word wrap mode, use specialized function that accounts for both
+            // line wrapping and diagnostic virtual lines
+            word_wrap::visual_row_to_buffer_position_with_diagnostics(
                 &self.buffer,
                 rel_y,
                 self.viewport.top_line,
                 content_width as usize,
                 self.render_cache.use_smart_wrap,
+                &self.lsp.diagnostics,
             )
         } else {
-            let line_len = self
-                .buffer
-                .line(self.viewport.top_line + rel_y)
-                .map(|s| {
-                    use unicode_segmentation::UnicodeSegmentation;
-                    s.trim_end_matches('\n').graphemes(true).count()
-                })
-                .unwrap_or(0);
-            (self.viewport.top_line + rel_y, 0, line_len)
+            // Use virtual lines to correctly map visual row to buffer line
+            // This accounts for diagnostic and deletion marker virtual lines
+            if let Some(vline) = git::get_virtual_line_at_row(
+                &self.buffer,
+                &self.git.diff_cache,
+                self.render_cache.config.editor.show_git_diff,
+                &self.lsp.diagnostics,
+                self.viewport.top_line,
+                rel_y,
+                content_width as usize,
+            ) {
+                match vline {
+                    git::VirtualLine::Real(line_idx) => {
+                        let line_len = self
+                            .buffer
+                            .line(line_idx)
+                            .map(|s| {
+                                use unicode_segmentation::UnicodeSegmentation;
+                                s.trim_end_matches('\n').graphemes(true).count()
+                            })
+                            .unwrap_or(0);
+                        (line_idx, 0, line_len, false)
+                    }
+                    // For virtual lines (diagnostics, deletion markers), use the associated line
+                    git::VirtualLine::DeletionMarker(after_line, _) => (after_line, 0, 0, true),
+                    git::VirtualLine::Diagnostic { line, .. } => {
+                        let line_len = self
+                            .buffer
+                            .line(line)
+                            .map(|s| {
+                                use unicode_segmentation::UnicodeSegmentation;
+                                s.trim_end_matches('\n').graphemes(true).count()
+                            })
+                            .unwrap_or(0);
+                        (line, 0, line_len, true)
+                    }
+                }
+            } else {
+                // Fallback if no virtual line found
+                let line_idx = self.viewport.top_line + rel_y;
+                let line_len = self
+                    .buffer
+                    .line(line_idx)
+                    .map(|s| {
+                        use unicode_segmentation::UnicodeSegmentation;
+                        s.trim_end_matches('\n').graphemes(true).count()
+                    })
+                    .unwrap_or(0);
+                (line_idx, 0, line_len, false)
+            }
         };
+
+        // If mouse is on a virtual line (diagnostic/deletion), handle specially
+        if is_virtual_line {
+            // Click on virtual line - open diagnostics panel
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                self.cursor = Cursor::at(buffer_line, 0);
+                self.scroll_follows_cursor = true;
+                return vec![PanelEvent::OpenDiagnosticsPanel];
+            }
+            // For other mouse events on virtual lines, ignore
+            return vec![];
+        }
 
         let max_line = self.buffer.line_count().saturating_sub(1);
         let target_line = buffer_line.min(max_line);
@@ -2546,6 +2816,19 @@ impl Panel for Editor {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // Handle Ctrl+Click for go-to-definition
+                if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+                    // Close any existing popups
+                    self.lsp.hover_popup = None;
+                    self.lsp.hover_popup_rect = None;
+                    self.lsp.pending_ctrl_click = None;
+
+                    // Store pending definition request - will be executed in tick() where LspManager is available
+                    self.lsp.pending_definition_request = Some((target_line, target_col));
+                    self.input.click_tracker.skip_next_up = true;
+                    return vec![];
+                }
+
                 self.scroll_follows_cursor = true;
                 self.close_search();
 
@@ -2591,6 +2874,32 @@ impl Panel for Editor {
                     selection.active = self.cursor;
                     if selection.is_empty() {
                         self.selection = None;
+                    }
+                }
+            }
+            MouseEventKind::Moved => {
+                // Track mouse position for hover functionality
+                let new_pos = (mouse.column, mouse.row);
+                let old_pos = self.lsp.last_mouse_position;
+
+                if old_pos != Some(new_pos) {
+                    // Don't close hover if mouse is inside hover popup
+                    if self.lsp.hover_popup.is_some() {
+                        if let Some(rect) = self.lsp.hover_popup_rect {
+                            let in_popup = mouse.column >= rect.x
+                                && mouse.column < rect.x + rect.width
+                                && mouse.row >= rect.y
+                                && mouse.row < rect.y + rect.height;
+                            if !in_popup {
+                                self.close_hover_popup();
+                            }
+                        }
+                    }
+
+                    // Schedule hover only if no popups open
+                    if self.lsp.completion_popup.is_none() && self.lsp.hover_popup.is_none() {
+                        self.lsp
+                            .schedule_hover(target_line, target_col, mouse.column, mouse.row);
                     }
                 }
             }
@@ -2710,8 +3019,10 @@ impl Panel for Editor {
     }
 
     fn captures_escape(&self) -> bool {
-        // Capture Escape when search is active or completion popup is open
-        self.search.state.is_some() || self.lsp.completion_popup.is_some()
+        // Capture Escape when search is active or any popup is open
+        self.search.state.is_some()
+            || self.lsp.completion_popup.is_some()
+            || self.lsp.hover_popup.is_some()
     }
 
     fn to_session(&self, session_dir: &std::path::Path) -> Option<SessionPanel> {

@@ -241,6 +241,8 @@ pub struct EditorKeybindings {
 
     // LSP
     pub trigger_completion: Option<KeyBinding>,
+    pub show_hover: Option<KeyBinding>,
+    pub goto_definition: Option<KeyBinding>,
 }
 
 /// File manager keybindings (file_manager.keybindings section).
@@ -400,6 +402,8 @@ impl EditorKeybindings {
 
         // LSP
         set_default!(trigger_completion, "Ctrl+.");
+        set_default!(show_hover, "Ctrl+K");
+        set_default!(goto_definition, "F12");
     }
 }
 

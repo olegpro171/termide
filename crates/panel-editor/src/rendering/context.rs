@@ -5,7 +5,8 @@
 
 use std::collections::HashMap;
 
-use termide_buffer::{Cursor, SearchState, Selection};
+use lsp_types::{Diagnostic, DiagnosticSeverity};
+use termide_buffer::{Cursor, SearchState, Selection, TextBuffer};
 
 /// Pre-computed rendering context.
 ///
@@ -28,6 +29,12 @@ pub struct RenderContext {
 
     /// Cursor position in viewport coordinates (row, col), set during rendering.
     pub cursor_viewport_pos: Option<(usize, usize)>,
+
+    /// Map of line -> most severe diagnostic severity for gutter markers.
+    pub diagnostic_line_severity: HashMap<usize, DiagnosticSeverity>,
+
+    /// Map of (line, column) -> diagnostic severity for inline underlines.
+    pub diagnostic_ranges: HashMap<(usize, usize), DiagnosticSeverity>,
 }
 
 impl RenderContext {
@@ -35,7 +42,12 @@ impl RenderContext {
     ///
     /// Extracts and pre-computes all derived state needed for rendering.
     #[allow(dead_code)] // Used in Phase 4.2+
-    pub fn prepare(search_state: &Option<SearchState>, selection: &Option<Selection>) -> Self {
+    pub fn prepare(
+        search_state: &Option<SearchState>,
+        selection: &Option<Selection>,
+        diagnostics: &[Diagnostic],
+        buffer: &TextBuffer,
+    ) -> Self {
         // Pre-extract match information
         let search_matches: Vec<(usize, usize, usize)> = if let Some(ref search) = search_state {
             search
@@ -55,13 +67,29 @@ impl RenderContext {
         // Pre-extract selection information
         let selection_range = selection.as_ref().map(|s| (s.start(), s.end()));
 
+        // Build diagnostic maps for gutter markers and inline underlines
+        let (diagnostic_line_severity, diagnostic_ranges) =
+            build_diagnostic_maps(diagnostics, buffer);
+
         Self {
             search_match_map,
             search_matches,
             current_match_idx,
             selection_range,
             cursor_viewport_pos: None,
+            diagnostic_line_severity,
+            diagnostic_ranges,
         }
+    }
+
+    /// Get diagnostic severity for a line (for gutter marker).
+    pub fn diagnostic_severity_at_line(&self, line: usize) -> Option<DiagnosticSeverity> {
+        self.diagnostic_line_severity.get(&line).copied()
+    }
+
+    /// Get diagnostic severity at a specific position (for inline underline).
+    pub fn diagnostic_severity_at(&self, line: usize, column: usize) -> Option<DiagnosticSeverity> {
+        self.diagnostic_ranges.get(&(line, column)).copied()
     }
 }
 
@@ -81,6 +109,53 @@ fn build_search_match_map(
     }
 
     map
+}
+
+/// Build diagnostic maps for O(1) lookups during rendering.
+///
+/// Returns two maps:
+/// 1. Line -> most severe diagnostic severity (for gutter markers)
+/// 2. Empty map (inline underlines disabled - virtual diagnostic lines are used instead)
+fn build_diagnostic_maps(
+    diagnostics: &[Diagnostic],
+    _buffer: &TextBuffer,
+) -> (
+    HashMap<usize, DiagnosticSeverity>,
+    HashMap<(usize, usize), DiagnosticSeverity>,
+) {
+    let mut line_severity: HashMap<usize, DiagnosticSeverity> = HashMap::new();
+
+    for diag in diagnostics {
+        let severity = diag.severity.unwrap_or(DiagnosticSeverity::ERROR);
+        let start_line = diag.range.start.line as usize;
+        let end_line = diag.range.end.line as usize;
+
+        // Update line severity (keep most severe) for gutter markers
+        for line in start_line..=end_line {
+            line_severity
+                .entry(line)
+                .and_modify(|existing| {
+                    if severity_priority(severity) < severity_priority(*existing) {
+                        *existing = severity;
+                    }
+                })
+                .or_insert(severity);
+        }
+    }
+
+    // Return empty map for inline underlines - virtual diagnostic lines are used instead
+    (line_severity, HashMap::new())
+}
+
+/// Get priority for diagnostic severity (lower is more severe).
+fn severity_priority(severity: DiagnosticSeverity) -> u8 {
+    match severity {
+        DiagnosticSeverity::ERROR => 0,
+        DiagnosticSeverity::WARNING => 1,
+        DiagnosticSeverity::INFORMATION => 2,
+        DiagnosticSeverity::HINT => 3,
+        _ => 4,
+    }
 }
 
 #[cfg(test)]

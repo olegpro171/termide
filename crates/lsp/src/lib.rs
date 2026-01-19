@@ -230,6 +230,18 @@ impl LspManager {
         }
     }
 
+    /// Send didSave notification
+    ///
+    /// This triggers full project analysis in rust-analyzer and other LSP servers,
+    /// which is necessary for detecting logical errors like unresolved modules.
+    pub fn did_save(&self, lang: &str, file_path: &Path, text: Option<&str>) {
+        if let Some(server) = self.get_server(lang, file_path) {
+            if let Some(uri) = path_to_uri(file_path) {
+                server.did_save(uri, text.map(String::from));
+            }
+        }
+    }
+
     /// Poll for diagnostics updates (non-blocking)
     pub fn poll_diagnostics(&self) -> Option<PublishDiagnosticsParams> {
         self.diagnostics_rx.try_recv().ok()

@@ -213,11 +213,12 @@ pub fn get_tools_items() -> Vec<DropdownItem> {
         DropdownItem::new(t.tools_git_status(), "git_status"),
         DropdownItem::new(t.tools_git_log(), "git_log"),
         DropdownItem::new(t.tools_journal(), "journal"),
+        DropdownItem::new(t.tools_diagnostics(), "diagnostics"),
     ]
 }
 
 /// Number of items in Tools submenu
-pub const TOOLS_SUBMENU_ITEM_COUNT: usize = 6;
+pub const TOOLS_SUBMENU_ITEM_COUNT: usize = 7;
 
 /// Get options submenu items
 pub fn get_options_items() -> Vec<DropdownItem> {

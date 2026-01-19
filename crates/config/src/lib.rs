@@ -42,6 +42,7 @@ pub mod defaults {
     pub const LSP_ENABLED: bool = true;
     pub const LSP_AUTO_COMPLETION: bool = true;
     pub const LSP_COMPLETION_DELAY_MS: u64 = 150;
+    pub const LSP_HOVER_DELAY_MS: u64 = 1000;
 }
 
 impl Config {

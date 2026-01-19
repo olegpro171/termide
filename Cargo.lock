@@ -2618,6 +2618,7 @@ dependencies = [
  "chrono",
  "crossterm 0.28.1",
  "dirs",
+ "lsp-types",
  "open",
  "ratatui",
  "tempfile",
@@ -2637,6 +2638,7 @@ dependencies = [
  "termide-logger",
  "termide-lsp",
  "termide-modal",
+ "termide-panel-diagnostics",
  "termide-panel-editor",
  "termide-panel-file-manager",
  "termide-panel-git-diff",
@@ -2860,6 +2862,21 @@ dependencies = [
  "termide-theme",
  "termide-ui",
  "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
+name = "termide-panel-diagnostics"
+version = "0.8.9"
+dependencies = [
+ "crossterm 0.28.1",
+ "lsp-types",
+ "ratatui",
+ "termide-config",
+ "termide-core",
+ "termide-i18n",
+ "termide-theme",
+ "termide-ui",
  "unicode-width",
 ]
 

@@ -6,6 +6,8 @@
 //! Implements core traits from termide-app-core for standardized
 //! state management and modal handling.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::mpsc;
 
 use termide_config::constants::DEFAULT_MAIN_PANEL_WIDTH;
@@ -99,6 +101,8 @@ pub struct AppState {
     pub last_spinner_update: Option<std::time::Instant>,
     /// LSP manager for language server integration
     pub lsp_manager: Option<LspManager>,
+    /// All diagnostics from LSP servers, keyed by file path
+    pub all_diagnostics: HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
 }
 
 impl Default for AppState {
@@ -153,6 +157,7 @@ impl AppState {
             needs_redraw: true, // Initial draw needed
             last_spinner_update: None,
             lsp_manager,
+            all_diagnostics: HashMap::new(),
         }
     }
 

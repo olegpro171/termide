@@ -613,6 +613,18 @@ impl LspServer {
         self.send_notification("textDocument/didClose", params);
     }
 
+    /// Send textDocument/didSave notification
+    ///
+    /// This triggers full project analysis in rust-analyzer and other LSP servers,
+    /// which is necessary for detecting logical errors like unresolved modules.
+    pub fn did_save(&self, uri: Uri, text: Option<String>) {
+        let params = lsp_types::DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri },
+            text,
+        };
+        self.send_notification("textDocument/didSave", params);
+    }
+
     /// Get current server status
     pub fn status(&self) -> ServerStatus {
         *self.status.lock().unwrap()

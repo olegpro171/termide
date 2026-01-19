@@ -165,13 +165,31 @@ impl App {
         let panel_area = self.get_active_panel_area();
 
         // Handle mouse event and collect results
-        let (events, modal_request) = if let Some(panel) = self.layout_manager.active_panel_mut() {
-            let events = panel.handle_mouse(mouse, panel_area);
-            let modal_request = panel.take_modal_request();
-            (events, modal_request)
-        } else {
-            (vec![], None)
-        };
+        let (mut events, modal_request) =
+            if let Some(panel) = self.layout_manager.active_panel_mut() {
+                let events = panel.handle_mouse(mouse, panel_area);
+                let modal_request = panel.take_modal_request();
+                (events, modal_request)
+            } else {
+                (vec![], None)
+            };
+
+        // Handle editor-specific LSP requests (Ctrl+click go-to-definition)
+        if let Some(panel) = self.layout_manager.active_panel_mut() {
+            if let Some(editor) = panel.as_editor_mut() {
+                // Handle go-to-definition request (Ctrl+click)
+                if let Some((line, col)) = editor.take_definition_request() {
+                    if let Some(ref lsp_manager) = self.state.lsp_manager {
+                        editor.request_definition(line, col, lsp_manager);
+                    }
+                }
+
+                // Poll for definition response (returns PanelEvent::OpenFileAt)
+                if let Some(event) = editor.poll_definition() {
+                    events.push(event);
+                }
+            }
+        }
 
         // Process panel events (new event-based architecture)
         self.process_panel_events(events)?;

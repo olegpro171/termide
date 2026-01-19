@@ -741,8 +741,33 @@ impl App {
                 self.state.close_menu();
                 self.handle_new_journal()?;
             }
+            6 => {
+                // Diagnostics - open diagnostics panel
+                self.state.close_menu();
+                self.handle_open_diagnostics()?;
+            }
             _ => {}
         }
+        Ok(())
+    }
+
+    /// Open Diagnostics panel
+    pub(super) fn handle_open_diagnostics(&mut self) -> Result<()> {
+        logger::debug("Opening Diagnostics panel");
+        self.close_welcome_panels();
+
+        if !self.find_and_focus_panel_by_name("diagnostics") {
+            let mut diagnostics_panel =
+                termide_panel_diagnostics::DiagnosticsPanel::new(self.state.theme);
+
+            // Initialize with existing diagnostics from all files
+            for (path, diags) in &self.state.all_diagnostics {
+                diagnostics_panel.update_diagnostics(path.clone(), diags);
+            }
+
+            self.add_panel(Box::new(diagnostics_panel));
+        }
+        self.auto_save_session();
         Ok(())
     }
 

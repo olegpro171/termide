@@ -4,6 +4,9 @@
 //! including smart wrapping (breaking at word boundaries) and hard wrapping
 //! (breaking at fixed column width).
 
+use std::collections::HashMap;
+
+use lsp_types::Diagnostic;
 use termide_buffer::{calculate_wrap_point, TextBuffer};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -266,4 +269,186 @@ pub fn visual_row_to_buffer_position(
         .map(|s| s.trim_end_matches('\n').graphemes(true).count())
         .unwrap_or(0);
     (last_line, 0, last_line_len)
+}
+
+/// Convert visual row to buffer position accounting for both word wrap and diagnostic virtual lines.
+///
+/// Returns (buffer_line, column_offset, chunk_end, is_virtual_line).
+/// - `buffer_line`: The buffer line index
+/// - `column_offset`: Grapheme index where this visual line starts
+/// - `chunk_end`: Grapheme index where this visual line ends (exclusive)
+/// - `is_virtual_line`: True if this row is a diagnostic virtual line
+///
+/// Diagnostic virtual lines appear after all wrapped segments of their associated buffer line.
+/// Multi-row diagnostics are handled correctly.
+pub fn visual_row_to_buffer_position_with_diagnostics(
+    buffer: &TextBuffer,
+    visual_row: usize,
+    viewport_top: usize,
+    content_width: usize,
+    use_smart_wrap: bool,
+    diagnostics: &[Diagnostic],
+) -> (usize, usize, usize, bool) {
+    // Group diagnostics by line with total row count (accounting for multi-row diagnostics)
+    let diagnostics_by_line = count_diagnostic_rows_by_line(diagnostics, buffer, content_width);
+
+    if content_width == 0 {
+        // No wrap, but still need to account for diagnostic lines
+        let mut current_visual_row = 0;
+        let mut line_idx = viewport_top;
+
+        while line_idx < buffer.line_count() {
+            // Real line
+            if current_visual_row == visual_row {
+                let line_len = buffer
+                    .line(line_idx)
+                    .map(|s| s.trim_end_matches('\n').graphemes(true).count())
+                    .unwrap_or(0);
+                return (line_idx, 0, line_len, false);
+            }
+            current_visual_row += 1;
+
+            // Diagnostic virtual rows for this line (may be more than number of diagnostics)
+            let diag_row_count = diagnostics_by_line.get(&line_idx).copied().unwrap_or(0);
+            for _ in 0..diag_row_count {
+                if current_visual_row == visual_row {
+                    let line_len = buffer
+                        .line(line_idx)
+                        .map(|s| s.trim_end_matches('\n').graphemes(true).count())
+                        .unwrap_or(0);
+                    return (line_idx, 0, line_len, true);
+                }
+                current_visual_row += 1;
+            }
+
+            line_idx += 1;
+        }
+
+        let last_line = buffer.line_count().saturating_sub(1);
+        let line_len = buffer
+            .line(last_line)
+            .map(|s| s.trim_end_matches('\n').graphemes(true).count())
+            .unwrap_or(0);
+        return (last_line, 0, line_len, false);
+    }
+
+    let mut current_visual_row = 0;
+    let mut line_idx = viewport_top;
+
+    while line_idx < buffer.line_count() {
+        if let Some(line_text) = buffer.line(line_idx) {
+            let line_text = line_text.trim_end_matches('\n');
+            let graphemes: Vec<&str> = line_text.graphemes(true).collect();
+            let line_len = graphemes.len();
+
+            // Handle empty lines (1 visual row)
+            if line_len == 0 {
+                if current_visual_row == visual_row {
+                    return (line_idx, 0, 0, false);
+                }
+                current_visual_row += 1;
+            } else {
+                // Iterate through wrapped segments
+                let mut grapheme_offset = 0;
+
+                while grapheme_offset < line_len {
+                    let chunk_end = if use_smart_wrap {
+                        calculate_wrap_point(&graphemes, grapheme_offset, content_width, line_len)
+                    } else {
+                        calculate_simple_wrap_point(&graphemes, grapheme_offset, content_width)
+                    };
+
+                    if current_visual_row == visual_row {
+                        // Found the target visual row - it's a real line segment
+                        return (line_idx, grapheme_offset, chunk_end, false);
+                    }
+
+                    current_visual_row += 1;
+
+                    // Safety: prevent infinite loop
+                    if chunk_end == grapheme_offset {
+                        grapheme_offset += 1;
+                    } else {
+                        grapheme_offset = chunk_end;
+                    }
+                }
+            }
+
+            // After all wrapped segments, check for diagnostic virtual rows
+            let diag_row_count = diagnostics_by_line.get(&line_idx).copied().unwrap_or(0);
+            for _ in 0..diag_row_count {
+                if current_visual_row == visual_row {
+                    // This visual row is a diagnostic virtual line
+                    return (line_idx, 0, line_len, true);
+                }
+                current_visual_row += 1;
+            }
+        } else {
+            // If line doesn't exist, treat as empty (1 visual row)
+            if current_visual_row == visual_row {
+                return (line_idx, 0, 0, false);
+            }
+            current_visual_row += 1;
+        }
+
+        line_idx += 1;
+    }
+
+    // If we've exhausted all lines, return the last line
+    let last_line = buffer.line_count().saturating_sub(1);
+    let last_line_len = buffer
+        .line(last_line)
+        .map(|s| s.trim_end_matches('\n').graphemes(true).count())
+        .unwrap_or(0);
+    (last_line, 0, last_line_len, false)
+}
+
+/// Count total diagnostic visual rows per buffer line.
+///
+/// This accounts for multi-row diagnostic messages that wrap based on content_width.
+fn count_diagnostic_rows_by_line(
+    diagnostics: &[Diagnostic],
+    _buffer: &TextBuffer,
+    content_width: usize,
+) -> HashMap<usize, usize> {
+    use crate::git;
+    use std::collections::HashSet;
+
+    let mut result: HashMap<usize, usize> = HashMap::new();
+    let mut seen: HashSet<(usize, String)> = HashSet::new();
+
+    for diag in diagnostics {
+        let line = diag.range.start.line as usize;
+        let key = (line, diag.message.clone());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.insert(key);
+
+        // Calculate diagnostic info similar to git::group_diagnostics_by_line
+        let start_col = diag.range.start.character as usize;
+        let end_col = diag.range.end.character as usize;
+
+        // Get underline length (simplified - use end_col - start_col)
+        let underline_len = end_col.saturating_sub(start_col).max(1);
+
+        // Extract code
+        let code = diag.code.as_ref().map(|c| match c {
+            lsp_types::NumberOrString::Number(n) => n.to_string(),
+            lsp_types::NumberOrString::String(s) => s.clone(),
+        });
+
+        // Calculate how many rows this diagnostic needs
+        let rows = git::calculate_diagnostic_rows(
+            start_col,
+            underline_len,
+            code.as_deref(),
+            &diag.message,
+            content_width,
+        );
+
+        *result.entry(line).or_insert(0) += rows;
+    }
+
+    result
 }

@@ -3,6 +3,7 @@
 //! This module provides the complete rendering system for the text editor,
 //! with separate implementations for word wrap and no-wrap modes.
 
+use lsp_types::Diagnostic;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -40,7 +41,7 @@ pub fn calculate_content_dimensions(area_width: u16, area_height: u16) -> (usize
 ///
 /// This is the main orchestrator function that:
 /// - Creates rendering styles based on theme
-/// - Prepares rendering context (search matches, selection)
+/// - Prepares rendering context (search matches, selection, diagnostics)
 /// - Selects appropriate rendering mode (word wrap vs no wrap)
 /// - Delegates to specialized rendering functions
 #[allow(clippy::too_many_arguments)]
@@ -55,6 +56,7 @@ pub fn render_editor_content<H: LineHighlighter>(
     highlight_cache: &mut H,
     search_state: &Option<SearchState>,
     selection: &Option<Selection>,
+    diagnostics: &[Diagnostic],
     theme: &Theme,
     show_git_diff: bool,
     word_wrap_enabled: bool,
@@ -79,7 +81,8 @@ pub fn render_editor_content<H: LineHighlighter>(
     let selection_style = Style::default().bg(theme.selected_bg).fg(theme.selected_fg);
 
     // Prepare rendering context
-    let mut render_context = context::RenderContext::prepare(search_state, selection);
+    let mut render_context =
+        context::RenderContext::prepare(search_state, selection, diagnostics, buffer);
 
     // Select rendering mode
     if word_wrap_enabled && content_width > 0 {
@@ -95,6 +98,7 @@ pub fn render_editor_content<H: LineHighlighter>(
             syntax_highlighting_enabled,
             highlight_cache,
             &mut render_context,
+            diagnostics,
             theme,
             content_width,
             content_height,
@@ -120,6 +124,7 @@ pub fn render_editor_content<H: LineHighlighter>(
             syntax_highlighting_enabled,
             highlight_cache,
             &render_context,
+            diagnostics,
             theme,
             content_width,
             content_height,

@@ -645,6 +645,14 @@ impl Translation for RuntimeTranslation {
         self.get_string("help_desc_navigate_completion")
     }
 
+    fn help_desc_show_hover(&self) -> &str {
+        self.get_string("help_desc_show_hover")
+    }
+
+    fn help_desc_goto_definition(&self) -> &str {
+        self.get_string("help_desc_goto_definition")
+    }
+
     fn help_desc_view_file(&self) -> &str {
         self.get_string("help_desc_view_file")
     }
@@ -1005,6 +1013,10 @@ impl Translation for RuntimeTranslation {
 
     fn tools_journal(&self) -> &str {
         self.get_string("tools_journal")
+    }
+
+    fn tools_diagnostics(&self) -> &str {
+        self.get_string("tools_diagnostics")
     }
 
     fn options_help(&self) -> &str {

@@ -37,6 +37,10 @@ impl App {
                 self.event_open_file(path)?;
             }
 
+            PanelEvent::OpenFileAt { path, line, column } => {
+                self.event_open_file_at(path, line, column)?;
+            }
+
             PanelEvent::ExecuteFile(path) => {
                 self.event_execute_file(path)?;
             }
@@ -86,6 +90,11 @@ impl App {
 
             PanelEvent::PrevPanel => {
                 self.layout_manager.prev_group();
+            }
+
+            // === Open panels ===
+            PanelEvent::OpenDiagnosticsPanel => {
+                self.handle_open_diagnostics()?;
             }
 
             // === Clipboard ===
@@ -262,6 +271,72 @@ impl App {
                 self.add_panel(Box::new(editor_panel));
                 self.auto_save_session();
                 logger::info(format!("File '{}' opened in editor", filename));
+                self.state.set_info(t.editor_file_opened(filename));
+            }
+            Err(e) => {
+                let error_msg = t.status_error_open_file(filename, &e.to_string());
+                logger::error(format!("Error opening '{}': {}", filename, e));
+                self.state.set_error(error_msg);
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle OpenFileAt event - open file in editor at specific location (for go-to-definition)
+    fn event_open_file_at(&mut self, file_path: PathBuf, line: usize, column: usize) -> Result<()> {
+        self.close_welcome_panels();
+        let filename = file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?");
+        let t = i18n::t();
+        logger::debug(format!(
+            "Opening file at {}:{} via event: {}",
+            line + 1,
+            column,
+            filename
+        ));
+
+        // First check if the file is already open in an editor
+        for panel in self.layout_manager.iter_all_panels_mut() {
+            if let Some(editor) = panel.as_editor_mut() {
+                if editor.file_path() == Some(&file_path) {
+                    // File is already open - just move cursor to position
+                    editor.goto_position(line, column);
+                    // Focus this panel
+                    // Note: This doesn't change focus, but the cursor will move
+                    logger::info(format!(
+                        "Jumped to {}:{} in already-open file '{}'",
+                        line + 1,
+                        column,
+                        filename
+                    ));
+                    self.state
+                        .set_info(format!("{}:{}:{}", filename, line + 1, column));
+                    return Ok(());
+                }
+            }
+        }
+
+        // File not open - open it and move to position
+        match Editor::open_file_with_config(file_path.clone(), self.state.editor_config()) {
+            Ok(mut editor_panel) => {
+                // Move cursor to the requested position
+                editor_panel.goto_position(line, column);
+
+                // Initialize LSP for the editor
+                if let Some(ref mut lsp_manager) = self.state.lsp_manager {
+                    editor_panel.init_lsp(lsp_manager);
+                }
+
+                self.add_panel(Box::new(editor_panel));
+                self.auto_save_session();
+                logger::info(format!(
+                    "File '{}' opened at {}:{}",
+                    filename,
+                    line + 1,
+                    column
+                ));
                 self.state.set_info(t.editor_file_opened(filename));
             }
             Err(e) => {
@@ -479,12 +554,20 @@ impl App {
 
     /// Handle SaveFile event - save file at given path
     fn event_save_file(&mut self, path: PathBuf) -> Result<()> {
+        // Store info needed for LSP notification (before mutable borrow)
+        let mut lsp_info: Option<(String, std::path::PathBuf)> = None;
+
         if let Some(panel) = self.layout_manager.active_panel_mut() {
             if let Some(editor) = panel.as_editor_mut() {
                 match editor.save_file_as(path.clone()) {
                     Ok(()) => {
                         let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                         self.state.set_info(format!("Saved: {}", filename));
+
+                        // Collect LSP info for didSave notification
+                        if let Some(lang) = editor.lsp_language() {
+                            lsp_info = Some((lang.to_string(), path.clone()));
+                        }
                     }
                     Err(e) => {
                         logger::error(format!("Save failed: {}", e));
@@ -493,6 +576,14 @@ impl App {
                 }
             }
         }
+
+        // Send LSP didSave notification (triggers full analysis for semantic errors)
+        if let Some((lang, file_path)) = lsp_info {
+            if let Some(ref lsp_manager) = self.state.lsp_manager {
+                lsp_manager.did_save(&lang, &file_path, None);
+            }
+        }
+
         Ok(())
     }
 

@@ -19,6 +19,9 @@ impl App {
         _panel_index: usize, // obsolete with LayoutManager
         value: Box<dyn std::any::Any>,
     ) -> Result<()> {
+        // Store info needed for LSP notification (before mutable borrow)
+        let mut lsp_info: Option<(String, PathBuf)> = None;
+
         if let Some(selected) = value.downcast_ref::<Vec<usize>>() {
             if selected.is_empty() {
                 // Cancel or Esc - do nothing
@@ -41,6 +44,13 @@ impl App {
                                     return Ok(());
                                 }
                                 termide_logger::info("File saved before closing");
+
+                                // Collect LSP info for didSave notification
+                                if let Some(lang) = editor.lsp_language() {
+                                    if let Some(path) = editor.file_path() {
+                                        lsp_info = Some((lang.to_string(), path.to_path_buf()));
+                                    }
+                                }
                             } else {
                                 // Unnamed file - need to request name
                                 let t = i18n::t();
@@ -76,6 +86,14 @@ impl App {
                 }
             }
         }
+
+        // Send LSP didSave notification (triggers full analysis for semantic errors)
+        if let Some((lang, file_path)) = lsp_info {
+            if let Some(ref lsp_manager) = self.state.lsp_manager {
+                lsp_manager.did_save(&lang, &file_path, None);
+            }
+        }
+
         Ok(())
     }
 

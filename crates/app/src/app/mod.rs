@@ -500,7 +500,47 @@ impl App {
             self.state.needs_redraw = true;
         }
 
-        // Now handle completion for the active editor only
+        // Poll for diagnostics from LSP and dispatch to editors and diagnostics panel
+        if let Some(ref lsp_manager) = self.state.lsp_manager {
+            while let Some(params) = lsp_manager.poll_diagnostics() {
+                // Convert URI to path - parse as URL then extract file path
+                let uri_str = params.uri.as_str();
+                if let Some(path_str) = uri_str.strip_prefix("file://") {
+                    // On Unix paths start with /, on Windows with drive letter
+                    #[cfg(unix)]
+                    let path = std::path::PathBuf::from(path_str);
+                    #[cfg(windows)]
+                    let path = std::path::PathBuf::from(path_str.trim_start_matches('/'));
+
+                    // Store in app state for later use (e.g., when opening diagnostics panel)
+                    self.state
+                        .all_diagnostics
+                        .insert(path.clone(), params.diagnostics.clone());
+
+                    // Find editor with this file and update diagnostics
+                    for panel in self.layout_manager.iter_all_panels_mut() {
+                        if let Some(editor) = panel.as_editor_mut() {
+                            if editor.file_path() == Some(&path) {
+                                editor.update_diagnostics(params.diagnostics.clone());
+                                self.state.needs_redraw = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Update diagnostics panel if open
+                    for panel in self.layout_manager.iter_all_panels_mut() {
+                        if let Some(diag_panel) = panel.as_diagnostics_panel_mut() {
+                            diag_panel.update_diagnostics(path.clone(), &params.diagnostics);
+                            self.state.needs_redraw = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now handle completion and hover for the active editor only
+        let mut pending_definition_event = None;
         if let Some(panel) = self.layout_manager.active_panel_mut() {
             if let Some(editor) = panel.as_editor_mut() {
                 // Check if there's a pending completion response
@@ -523,7 +563,34 @@ impl App {
                 if had_popup_before != has_popup_now {
                     self.state.needs_redraw = true;
                 }
+
+                // Check hover timer and request hover if expired
+                if let Some(ref lsp_manager) = self.state.lsp_manager {
+                    let delay_ms = self.state.config.lsp.hover_delay_ms;
+                    if editor.check_hover_timer(lsp_manager, delay_ms) {
+                        self.state.needs_redraw = true;
+                    }
+                }
+
+                // Poll for hover response
+                let had_hover_popup = editor.has_hover_popup();
+                editor.poll_hover();
+                if had_hover_popup != editor.has_hover_popup() {
+                    self.state.needs_redraw = true;
+                }
+
+                // Poll for definition response (Ctrl+click go-to-definition)
+                if let Some(event) = editor.poll_definition() {
+                    // Store event to be processed after we release the borrow
+                    pending_definition_event = Some(event);
+                    self.state.needs_redraw = true;
+                }
             }
+        }
+
+        // Process pending definition event (outside of panel borrow)
+        if let Some(event) = pending_definition_event {
+            let _ = self.process_panel_events(vec![event]);
         }
     }
 
