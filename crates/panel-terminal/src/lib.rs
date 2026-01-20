@@ -630,6 +630,7 @@ impl Terminal {
         panel_area: Rect,
     ) -> Result<()> {
         use crossterm::event::{MouseButton, MouseEventKind};
+        use std::io::Write;
 
         let (mouse_tracking, sgr_mode) = {
             let screen = self.screen.read().expect("Terminal screen lock poisoned");
@@ -645,78 +646,45 @@ impl Terminal {
         let inner_x = mouse.column.saturating_sub(panel_area.x + 1) + 1;
         let inner_y = mouse.row.saturating_sub(panel_area.y + 1) + 1;
 
-        let sequence = match mouse.kind {
-            MouseEventKind::Down(button) => {
-                let btn_code = match button {
-                    MouseButton::Left => 0,
-                    MouseButton::Middle => 1,
-                    MouseButton::Right => 2,
-                };
-                if sgr_mode {
-                    format!("\x1b[<{};{};{}M", btn_code, inner_x, inner_y)
-                } else {
-                    let encoded_btn = (btn_code + 32) as u8;
-                    let encoded_x = (inner_x as u8).saturating_add(32);
-                    let encoded_y = (inner_y as u8).saturating_add(32);
-                    format!(
-                        "\x1b[M{}{}{}",
-                        encoded_btn as char, encoded_x as char, encoded_y as char
-                    )
-                }
-            }
-            MouseEventKind::Up(button) => {
-                if sgr_mode {
-                    let btn_code = match button {
-                        MouseButton::Left => 0,
-                        MouseButton::Middle => 1,
-                        MouseButton::Right => 2,
-                    };
-                    format!("\x1b[<{};{};{}m", btn_code, inner_x, inner_y)
-                } else {
-                    let encoded_x = (inner_x as u8).saturating_add(32);
-                    let encoded_y = (inner_y as u8).saturating_add(32);
-                    format!(
-                        "\x1b[M{}{}{}",
-                        (3 + 32) as u8 as char,
-                        encoded_x as char,
-                        encoded_y as char
-                    )
-                }
-            }
-            MouseEventKind::ScrollUp => {
-                let btn_code = 64;
-                if sgr_mode {
-                    format!("\x1b[<{};{};{}M", btn_code, inner_x, inner_y)
-                } else {
-                    let encoded_x = (inner_x as u8).saturating_add(32);
-                    let encoded_y = (inner_y as u8).saturating_add(32);
-                    format!(
-                        "\x1b[M{}{}{}",
-                        (btn_code + 32) as u8 as char,
-                        encoded_x as char,
-                        encoded_y as char
-                    )
-                }
-            }
-            MouseEventKind::ScrollDown => {
-                let btn_code = 65;
-                if sgr_mode {
-                    format!("\x1b[<{};{};{}M", btn_code, inner_x, inner_y)
-                } else {
-                    let encoded_x = (inner_x as u8).saturating_add(32);
-                    let encoded_y = (inner_y as u8).saturating_add(32);
-                    format!(
-                        "\x1b[M{}{}{}",
-                        (btn_code + 32) as u8 as char,
-                        encoded_x as char,
-                        encoded_y as char
-                    )
-                }
-            }
+        // Reusable buffer to avoid allocations (max SGR sequence is ~20 bytes)
+        let mut buf = [0u8; 32];
+
+        // Determine button code and whether this is release event
+        let (btn_code, is_release): (u8, bool) = match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => (0, false),
+            MouseEventKind::Down(MouseButton::Middle) => (1, false),
+            MouseEventKind::Down(MouseButton::Right) => (2, false),
+            MouseEventKind::Up(MouseButton::Left) => (0, true),
+            MouseEventKind::Up(MouseButton::Middle) => (1, true),
+            MouseEventKind::Up(MouseButton::Right) => (2, true),
+            MouseEventKind::ScrollUp => (64, false),
+            MouseEventKind::ScrollDown => (65, false),
             _ => return Ok(()),
         };
 
-        self.send_input(sequence.as_bytes())?;
+        // Build sequence directly into buffer (zero allocation)
+        let len = if sgr_mode {
+            // SGR format: ESC [ < btn ; x ; y (M for press, m for release)
+            let suffix: u8 = if is_release { b'm' } else { b'M' };
+            let mut cursor = std::io::Cursor::new(&mut buf[..]);
+            write!(cursor, "\x1b[<{};{};{}", btn_code, inner_x, inner_y).ok();
+            let pos = cursor.position() as usize;
+            buf[pos] = suffix;
+            pos + 1
+        } else {
+            // X10/Normal format: ESC [ M <btn+32> <x+32> <y+32>
+            // Release in non-SGR mode always uses button code 3
+            let effective_btn = if is_release { 3 } else { btn_code };
+            buf[0] = b'\x1b';
+            buf[1] = b'[';
+            buf[2] = b'M';
+            buf[3] = effective_btn.saturating_add(32);
+            buf[4] = (inner_x as u8).saturating_add(32);
+            buf[5] = (inner_y as u8).saturating_add(32);
+            6
+        };
+
+        self.send_input(&buf[..len])?;
         Ok(())
     }
 

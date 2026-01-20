@@ -196,10 +196,30 @@ pub fn get_git_status(dir: &Path) -> Option<GitStatusCache> {
         }
     }
 
+    // Pre-compute directories with changes for O(1) lookup
+    let dirs_with_changes: HashSet<PathBuf> = status_map
+        .iter()
+        .filter(|(_, status)| **status != GitStatus::Unmodified && **status != GitStatus::Ignored)
+        .flat_map(|(path, _)| {
+            // Collect all ancestor directories of this path
+            let mut ancestors = Vec::new();
+            let mut current = path.as_path();
+            while let Some(parent) = current.parent() {
+                if parent.as_os_str().is_empty() {
+                    break;
+                }
+                ancestors.push(parent.to_path_buf());
+                current = parent;
+            }
+            ancestors
+        })
+        .collect();
+
     Some(GitStatusCache {
         status_map,
         ignored_files,
         relative_path,
+        dirs_with_changes,
     })
 }
 
@@ -228,6 +248,8 @@ pub struct GitStatusCache {
     status_map: HashMap<PathBuf, GitStatus>,
     ignored_files: HashSet<PathBuf>,
     relative_path: PathBuf,
+    /// Pre-computed set of directories that contain changes (for O(1) lookup)
+    dirs_with_changes: HashSet<PathBuf>,
 }
 
 impl GitStatusCache {
@@ -286,17 +308,8 @@ impl GitStatusCache {
             self.relative_path.join(dir_name)
         };
 
-        let dir_prefix = format!("{}/", full_dir.display());
-
-        self.status_map.iter().any(|(path, status)| {
-            if let Some(path_str) = path.to_str() {
-                path_str.starts_with(&dir_prefix)
-                    && *status != GitStatus::Unmodified
-                    && *status != GitStatus::Ignored
-            } else {
-                false
-            }
-        })
+        // O(1) lookup instead of O(n) iteration
+        self.dirs_with_changes.contains(&full_dir)
     }
 
     pub fn get_directory_status(&self, dir_name: &str) -> GitStatus {
@@ -945,24 +958,24 @@ pub fn find_repos_from_paths(paths: &[PathBuf], submodule_depth: usize) -> Vec<P
 /// Optimized from O(n²) to O(n log n) by leveraging sorted order:
 /// after sorting, a parent path always comes before its children,
 /// so we only need to check against the last added path.
+///
+/// Note: Input must be pre-sorted. If not sorted, behavior is undefined.
 fn remove_nested_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
     if paths.is_empty() {
         return Vec::new();
     }
 
-    let mut sorted = paths.to_vec();
-    sorted.sort();
+    // Input is expected to be pre-sorted (sorted by caller)
+    let mut result = Vec::with_capacity(paths.len());
 
-    let mut result = Vec::with_capacity(sorted.len());
-
-    for path in sorted {
+    for path in paths {
         // After sorting, parent always comes before child.
         // So we only need to check if current path is nested under the last added path.
         let is_nested = result
             .last()
             .is_some_and(|last: &PathBuf| path.starts_with(last));
         if !is_nested {
-            result.push(path);
+            result.push(path.clone());
         }
     }
 

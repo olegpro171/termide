@@ -9,6 +9,19 @@ use termide_config::FileManagerSettings;
 use termide_git::GitStatus;
 use termide_theme::Theme;
 
+/// Get style for git status (extracted to avoid duplication)
+fn git_status_style(status: GitStatus, theme: &Theme) -> Style {
+    match status {
+        GitStatus::Ignored => Style::default()
+            .fg(theme.disabled)
+            .add_modifier(Modifier::DIM),
+        GitStatus::Modified => Style::default().fg(theme.warning),
+        GitStatus::Added => Style::default().fg(theme.success),
+        GitStatus::Deleted => Style::default().fg(theme.error),
+        GitStatus::Unmodified => Style::default().fg(theme.fg),
+    }
+}
+
 impl FileManager {
     /// Get list of lines for display
     pub(crate) fn get_items(
@@ -74,35 +87,19 @@ impl FileManager {
             let full_name = format!("{}{}", dir_prefix, name);
 
             let (bg_style, fg_style) = if is_cursor && is_focused {
-                // Вычислить нормальный fg_style для этой строки
-                let normal_fg_style = match entry.git_status {
-                    GitStatus::Ignored => Style::default()
-                        .fg(theme.disabled)
-                        .add_modifier(Modifier::DIM),
-                    GitStatus::Modified => Style::default().fg(theme.warning),
-                    GitStatus::Added => Style::default().fg(theme.success),
-                    GitStatus::Deleted => Style::default().fg(theme.error),
-                    GitStatus::Unmodified => Style::default().fg(theme.fg),
-                };
+                // Get the normal foreground style for this entry
+                let normal_fg_style = git_status_style(entry.git_status, theme);
 
-                // Извлечь fg цвет и создать инверсный стиль курсора
+                // Extract fg color and create inverted cursor style
                 let fg_color = normal_fg_style.fg.unwrap_or(theme.fg);
                 let cursor_style = Style::default()
-                    .bg(fg_color) // Swap: fg строки становится bg курсора
-                    .fg(theme.bg) // Swap: theme bg становится fg курсора
+                    .bg(fg_color) // Swap: entry fg becomes cursor bg
+                    .fg(theme.bg) // Swap: theme bg becomes cursor fg
                     .add_modifier(Modifier::BOLD);
 
                 (cursor_style, cursor_style)
             } else {
-                let fg_style = match entry.git_status {
-                    GitStatus::Ignored => Style::default()
-                        .fg(theme.disabled)
-                        .add_modifier(Modifier::DIM),
-                    GitStatus::Modified => Style::default().fg(theme.warning),
-                    GitStatus::Added => Style::default().fg(theme.success),
-                    GitStatus::Deleted => Style::default().fg(theme.error),
-                    GitStatus::Unmodified => Style::default().fg(theme.fg),
-                };
+                let fg_style = git_status_style(entry.git_status, theme);
                 (Style::default(), fg_style)
             };
 

@@ -229,9 +229,10 @@ impl GitStatusPanel {
         if self.cursor > max_cursor {
             self.cursor = max_cursor;
         }
-        // Ensure cursor is on a selectable line
-        while self.cursor > 0 && !self.is_selectable_line(self.cursor) {
-            self.cursor -= 1;
+        // Ensure cursor is on a selectable line (direct calculation instead of loop)
+        if !self.is_selectable_line(self.cursor) {
+            // Find the nearest selectable line (either a file or header with files)
+            self.cursor = self.find_nearest_selectable_line(self.cursor);
         }
 
         self.is_loading = false;
@@ -338,6 +339,27 @@ impl GitStatusPanel {
             }
         }
         0
+    }
+
+    /// Find the nearest selectable line to the given position
+    /// Prefers moving backward (up) when current line is not selectable
+    fn find_nearest_selectable_line(&self, vline: usize) -> usize {
+        // Try moving backward first (more natural for cursor adjustment after refresh)
+        for offset in 1..=vline {
+            let target = vline - offset;
+            if self.is_selectable_line(target) {
+                return target;
+            }
+        }
+        // If nothing found backward, try forward
+        let total = self.total_virtual_lines();
+        for target in (vline + 1)..total {
+            if self.is_selectable_line(target) {
+                return target;
+            }
+        }
+        // Fallback to first selectable
+        self.first_selectable_line()
     }
 
     /// Cursor position is the virtual line directly

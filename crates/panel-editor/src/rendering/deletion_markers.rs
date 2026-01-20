@@ -161,7 +161,7 @@ mod tests {
         // Check marker (position 4)
         if let Some(cell) = buf.cell((4, 2)) {
             assert_eq!(cell.symbol(), "▶");
-            assert_eq!(cell.fg, Color::Red); // error color
+            assert_eq!(cell.fg, Color::Gray); // disabled color (dimmed to differentiate from LSP errors)
         }
 
         // Check space after marker (position 5)
@@ -220,7 +220,7 @@ mod tests {
         // Verify marker is present
         if let Some(cell) = buf.cell((4, 1)) {
             assert_eq!(cell.symbol(), "▶");
-            assert_eq!(cell.fg, Color::Red);
+            assert_eq!(cell.fg, Color::Gray); // disabled color (dimmed to differentiate from LSP errors)
         }
 
         // Verify content area has styling

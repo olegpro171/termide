@@ -38,6 +38,72 @@ enum DragMode {
     Toggle, // Ctrl+drag - toggle selection
 }
 
+/// How a file should be opened
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FileOpenMode {
+    /// Open with default action (Enter): auto-detect type
+    Default,
+    /// Force open in editor (F4): treat everything as text
+    ForceEdit,
+    /// View mode (F3): similar to Default but executables are treated as text
+    View,
+    /// Open with system default app (Shift+Enter)
+    External,
+}
+
+/// Determine the appropriate PanelEvent for opening a file based on its type and open mode.
+/// Returns None if the operation should not proceed (e.g., deleted files, directories).
+fn determine_file_open_event(
+    entry: &FileEntry,
+    file_path: &std::path::Path,
+    mode: FileOpenMode,
+) -> Option<PanelEvent> {
+    // Prohibit operations on deleted files
+    if entry.git_status == GitStatus::Deleted {
+        return None;
+    }
+
+    // Directories and ".." - do nothing for file operations
+    if entry.is_dir || entry.name == ".." {
+        return None;
+    }
+
+    match mode {
+        FileOpenMode::External => {
+            // Always open with system default
+            Some(PanelEvent::OpenExternal(file_path.to_path_buf()))
+        }
+        FileOpenMode::ForceEdit => {
+            // Force open in editor regardless of type
+            Some(PanelEvent::OpenFile(file_path.to_path_buf()))
+        }
+        FileOpenMode::Default | FileOpenMode::View => {
+            // 1. Raster images → ImagePanel
+            if is_raster_image(&entry.name) {
+                return Some(PanelEvent::PreviewMedia(file_path.to_path_buf()));
+            }
+
+            // 2. Vector images, video → xdg-open
+            if is_vector_image(&entry.name) || is_video(&entry.name) {
+                return Some(PanelEvent::OpenExternal(file_path.to_path_buf()));
+            }
+
+            // 3. Executable → run in terminal (Default mode only)
+            if mode == FileOpenMode::Default && entry.is_executable {
+                return Some(PanelEvent::ExecuteFile(file_path.to_path_buf()));
+            }
+
+            // 4. Binary files → xdg-open
+            if is_binary_file(file_path) {
+                return Some(PanelEvent::OpenExternal(file_path.to_path_buf()));
+            }
+
+            // 5. Text files → editor
+            Some(PanelEvent::OpenFile(file_path.to_path_buf()))
+        }
+    }
+}
+
 /// Selection state for file manager (multi-select and drag selection)
 #[derive(Clone, Default)]
 pub struct SelectionState {
@@ -602,129 +668,60 @@ impl FileManager {
     /// Enter directory or open file
     /// Returns `Some(PanelEvent::OpenFile)` if a file should be opened
     fn enter(&mut self) -> Option<PanelEvent> {
-        if let Some(entry) = self.entries.get(self.selected) {
-            // Prohibit operations on deleted files
-            if entry.git_status == GitStatus::Deleted {
-                return None;
-            }
+        let entry = self.entries.get(self.selected)?;
 
-            if entry.name == ".." {
-                // Save current directory name before going up
-                if let Some(dir_name) = self.current_path.file_name() {
-                    self.navigation
-                        .save_for_going_up(dir_name.to_string_lossy().to_string());
-                }
-                if let Some(parent) = self.current_path.parent() {
-                    self.current_path = parent.to_path_buf();
-                    let _ = self.load_directory();
-                }
-            } else if entry.is_dir {
-                self.navigation.prepare_for_going_down();
-                self.current_path.push(&entry.name);
-                let _ = self.load_directory();
-            } else {
-                // This is a file
-                let file_path = self.current_path.join(&entry.name);
-
-                // 1. Raster images → ImagePanel or xdg-open
-                if is_raster_image(&entry.name) {
-                    return Some(PanelEvent::PreviewMedia(file_path));
-                }
-
-                // 2. Vector images, video → always xdg-open
-                if is_vector_image(&entry.name) || is_video(&entry.name) {
-                    return Some(PanelEvent::OpenExternal(file_path));
-                }
-
-                // 3. Executable → run in terminal
-                if entry.is_executable {
-                    return Some(PanelEvent::ExecuteFile(file_path));
-                }
-
-                // 4. Binary files → xdg-open
-                if is_binary_file(&file_path) {
-                    return Some(PanelEvent::OpenExternal(file_path));
-                }
-
-                // 5. Text files → editor
-                return Some(PanelEvent::OpenFile(file_path));
-            }
+        // Prohibit operations on deleted files
+        if entry.git_status == GitStatus::Deleted {
+            return None;
         }
-        None
+
+        // Handle directory navigation
+        if entry.name == ".." {
+            // Save current directory name before going up
+            if let Some(dir_name) = self.current_path.file_name() {
+                self.navigation
+                    .save_for_going_up(dir_name.to_string_lossy().to_string());
+            }
+            if let Some(parent) = self.current_path.parent() {
+                self.current_path = parent.to_path_buf();
+                let _ = self.load_directory();
+            }
+            return None;
+        }
+
+        if entry.is_dir {
+            self.navigation.prepare_for_going_down();
+            self.current_path.push(&entry.name);
+            let _ = self.load_directory();
+            return None;
+        }
+
+        // This is a file - delegate to helper
+        let file_path = self.current_path.join(&entry.name);
+        determine_file_open_event(entry, &file_path, FileOpenMode::Default)
     }
 
     /// Open file for editing (F4)
     /// Returns `Some(PanelEvent::OpenFile)` if a file should be opened
     fn edit_file(&mut self) -> Option<PanelEvent> {
-        if let Some(entry) = self.entries.get(self.selected) {
-            // Prohibit operations on deleted files
-            if entry.git_status == GitStatus::Deleted {
-                return None;
-            }
-
-            // Check that this is a file, not a directory and not ".."
-            if !entry.is_dir && entry.name != ".." {
-                let file_path = self.current_path.join(&entry.name);
-                return Some(PanelEvent::OpenFile(file_path));
-            }
-        }
-        None
+        let entry = self.entries.get(self.selected)?;
+        let file_path = self.current_path.join(&entry.name);
+        determine_file_open_event(entry, &file_path, FileOpenMode::ForceEdit)
     }
 
     /// View file without executing (F3)
     /// Similar to enter() but treats executables as text files
     fn view_file(&mut self) -> Option<PanelEvent> {
-        if let Some(entry) = self.entries.get(self.selected) {
-            // Prohibit operations on deleted files
-            if entry.git_status == GitStatus::Deleted {
-                return None;
-            }
-
-            // Directories and ".." - do nothing
-            if entry.is_dir || entry.name == ".." {
-                return None;
-            }
-
-            let file_path = self.current_path.join(&entry.name);
-
-            // 1. Raster images → ImagePanel
-            if is_raster_image(&entry.name) {
-                return Some(PanelEvent::PreviewMedia(file_path));
-            }
-
-            // 2. Vector images, video → xdg-open
-            if is_vector_image(&entry.name) || is_video(&entry.name) {
-                return Some(PanelEvent::OpenExternal(file_path));
-            }
-
-            // 3. Binary files → xdg-open
-            if is_binary_file(&file_path) {
-                return Some(PanelEvent::OpenExternal(file_path));
-            }
-
-            // 4. Text files (including executables) → editor
-            return Some(PanelEvent::OpenFile(file_path));
-        }
-        None
+        let entry = self.entries.get(self.selected)?;
+        let file_path = self.current_path.join(&entry.name);
+        determine_file_open_event(entry, &file_path, FileOpenMode::View)
     }
 
     /// Force open file with system default application (Shift+Enter)
     fn open_external(&mut self) -> Option<PanelEvent> {
-        if let Some(entry) = self.entries.get(self.selected) {
-            // Prohibit operations on deleted files
-            if entry.git_status == GitStatus::Deleted {
-                return None;
-            }
-
-            // Directories and ".." - do nothing
-            if entry.is_dir || entry.name == ".." {
-                return None;
-            }
-
-            let file_path = self.current_path.join(&entry.name);
-            return Some(PanelEvent::OpenExternal(file_path));
-        }
-        None
+        let entry = self.entries.get(self.selected)?;
+        let file_path = self.current_path.join(&entry.name);
+        determine_file_open_event(entry, &file_path, FileOpenMode::External)
     }
 
     /// Format file size in human-readable format (public method for external use)
@@ -786,29 +783,38 @@ impl FileManager {
 
         // Also add deleted files that weren't in the directory listing
         if let Some(cache) = &self.git_status_cache {
-            for deleted_name in cache.get_deleted_files() {
-                // Skip if already in entries
-                if self.entries.iter().any(|e| e.name == deleted_name) {
-                    continue;
-                }
-                self.entries.push(FileEntry {
-                    name: deleted_name,
-                    is_dir: false,
-                    is_symlink: false,
-                    is_executable: false,
-                    is_readonly: false,
-                    git_status: GitStatus::Deleted,
-                    size: None,
-                    modified: None,
-                });
-            }
+            let deleted_files = cache.get_deleted_files();
+            if !deleted_files.is_empty() {
+                // Build HashSet of existing entry names for O(1) lookup instead of O(n) per check
+                let existing_names: HashSet<String> =
+                    self.entries.iter().map(|e| e.name.clone()).collect();
 
-            // Re-sort if we added deleted files
-            self.entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            });
+                // Collect new entries to add (avoiding borrow conflict)
+                let new_entries: Vec<FileEntry> = deleted_files
+                    .into_iter()
+                    .filter(|deleted_name| !existing_names.contains(deleted_name))
+                    .map(|deleted_name| FileEntry {
+                        name: deleted_name,
+                        is_dir: false,
+                        is_symlink: false,
+                        is_executable: false,
+                        is_readonly: false,
+                        git_status: GitStatus::Deleted,
+                        size: None,
+                        modified: None,
+                    })
+                    .collect();
+
+                // Only re-sort if we actually added deleted files
+                if !new_entries.is_empty() {
+                    self.entries.extend(new_entries);
+                    self.entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                    });
+                }
+            }
         }
     }
 
