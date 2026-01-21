@@ -5,6 +5,27 @@ All notable changes to TermIDE will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-01-22
+
+### Added
+- **Linux TTY Support**: Native terminal colors for Linux console/framebuffer (TERM=linux)
+- **Remote Branch Display**: Git Status panel shows remote branches not available locally
+- **DECSTBM Scroll Regions**: Proper CSI scroll region support for terminal applications
+
+### Changed
+- **Terminal Refactoring**: Extracted utility modules (clipboard, disk_space, link_detection, shell_utils)
+- **Editor Refactoring**: Decomposed core.rs into focused modules (LSP, movement, search, text)
+- **Git Refactoring**: Split monolithic lib.rs into command, commits, files, operations modules
+- **Performance**: Cached regex patterns for link detection, reduced panel code duplication
+- **DRY Improvements**: Extracted helpers for file/terminal opening across panels
+
+### Fixed
+- **Synchronized Output**: Fixed cache invalidation when exiting sync_output mode (CSI ? 2026 l)
+- **CI Release Notes**: Fixed extraction of release notes from CHANGELOG.md
+
+### Performance
+- **Terminal**: Reduced SSH input latency and htop rendering overhead
+
 ## [0.9.0] - 2026-01-20
 
 ### Added
@@ -675,3 +696,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.1.0]: https://github.com/termide/termide/releases/tag/0.1.0
 [0.9.0]: https://github.com/termide/termide/releases/tag/0.9.0
 [0.8.9]: https://github.com/termide/termide/releases/tag/0.8.9
+[0.9.1]: https://github.com/termide/termide/releases/tag/0.9.1
