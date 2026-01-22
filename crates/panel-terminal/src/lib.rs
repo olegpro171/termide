@@ -649,12 +649,14 @@ impl Terminal {
                     if buf_idx < screen.active_buffer().len() {
                         &screen.active_buffer()[buf_idx]
                     } else {
+                        lines.push(Line::default());
                         continue;
                     }
                 }
             } else if row_idx < screen.active_buffer().len() {
                 &screen.active_buffer()[row_idx]
             } else {
+                lines.push(Line::default());
                 continue;
             };
 
