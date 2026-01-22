@@ -119,6 +119,21 @@ impl App {
         Ok(())
     }
 
+    /// Handle paste event in modal window
+    /// Returns true if modal handled the paste, false to pass to panel
+    pub(super) fn handle_modal_paste(&mut self, text: &str) -> bool {
+        if let Some(modal) = self.state.get_active_modal_mut() {
+            match modal {
+                ActiveModal::BookmarkAdd(m) => m.handle_paste(text),
+                ActiveModal::Input(m) => m.handle_paste(text),
+                // Other modals don't have text input fields, use default (false)
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
     /// Handle mouse event in modal window
     pub(super) fn handle_modal_mouse(
         &mut self,

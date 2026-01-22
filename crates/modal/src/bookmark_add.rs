@@ -375,6 +375,12 @@ impl Modal for BookmarkAddModal {
 
         // Render group dropdown if visible (visually connected to input field)
         if dropdown_height > 0 {
+            // Split dropdown area same as input field to align borders
+            let dropdown_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(15), Constraint::Min(1)])
+                .split(chunks[chunk_idx]);
+
             let items: Vec<ListItem> = self
                 .existing_groups
                 .iter()
@@ -405,7 +411,7 @@ impl Modal for BookmarkAddModal {
                         .border_style(Style::default().fg(theme.accented_fg)),
                 )
                 .style(Style::default().bg(theme.fg));
-            list.render(chunks[chunk_idx], buf);
+            list.render(dropdown_chunks[1], buf); // Render in right chunk (after label)
             chunk_idx += 1;
         }
 
@@ -736,6 +742,15 @@ impl Modal for BookmarkAddModal {
             Ok(Some(ModalResult::Cancelled))
         } else {
             Ok(None)
+        }
+    }
+
+    fn handle_paste(&mut self, text: &str) -> bool {
+        if let Some(input) = self.current_input() {
+            input.paste(text);
+            true
+        } else {
+            false
         }
     }
 }

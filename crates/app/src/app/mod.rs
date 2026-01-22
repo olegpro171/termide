@@ -227,8 +227,10 @@ impl App {
                     self.state.needs_redraw = true;
                 }
                 Event::Paste(text) => {
-                    // Handle bracketed paste - send to active panel
-                    self.handle_paste_event(text)?;
+                    // Handle bracketed paste - check modal first, then send to active panel
+                    if !self.handle_modal_paste(&text) {
+                        self.handle_paste_event(text)?;
+                    }
                     self.state.needs_redraw = true;
                 }
                 Event::Tick => {

@@ -128,4 +128,10 @@ pub trait Modal {
     ) -> Result<Option<ModalResult<Self::Result>>> {
         Ok(None) // Default: do nothing
     }
+
+    /// Handle paste event.
+    /// Returns true if the modal handled the paste, false to pass to panel.
+    fn handle_paste(&mut self, _text: &str) -> bool {
+        false // Default: modals don't handle paste
+    }
 }

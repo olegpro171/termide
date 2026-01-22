@@ -372,4 +372,9 @@ impl Modal for InputModal {
             Ok(None)
         }
     }
+
+    fn handle_paste(&mut self, text: &str) -> bool {
+        self.input_handler.paste(text);
+        true
+    }
 }

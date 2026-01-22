@@ -209,6 +209,8 @@ impl Perform for VtPerformer {
                             }
                             // Move cursor to home position (compatibility with old behavior)
                             screen.cursor = (0, 0);
+                            // Force cache invalidation to show cleared screen immediately
+                            screen.force_cache_invalidation = true;
                         }
                         3 => {
                             // Clear entire screen and scrollback
@@ -222,6 +224,8 @@ impl Perform for VtPerformer {
                                 screen.scrollback.clear();
                             }
                             screen.cursor = (0, 0);
+                            // Force cache invalidation to show cleared screen immediately
+                            screen.force_cache_invalidation = true;
                         }
                         _ => {}
                     }
@@ -374,6 +378,8 @@ impl Perform for VtPerformer {
                             }
                         }
                     }
+                    // Ensure buffer size invariant after IL operation
+                    screen.ensure_buffer_size();
                 }
                 'M' => {
                     // DL - Delete Lines (delete lines within scroll region)
@@ -412,6 +418,8 @@ impl Perform for VtPerformer {
                             buffer.insert(insert_pos, vec![empty_cell; cols]);
                         }
                     }
+                    // Ensure buffer size invariant after DL operation
+                    screen.ensure_buffer_size();
                 }
                 'S' => {
                     // SU - Scroll Up (scroll within region)
@@ -452,6 +460,8 @@ impl Perform for VtPerformer {
                             buffer.insert(insert_pos, vec![empty_cell; cols]);
                         }
                     }
+                    // Ensure buffer size invariant after SU operation
+                    screen.ensure_buffer_size();
                 }
                 'T' => {
                     // SD - Scroll Down (scroll within region)
@@ -492,6 +502,8 @@ impl Perform for VtPerformer {
                             buffer.insert(top, vec![empty_cell; cols]);
                         }
                     }
+                    // Ensure buffer size invariant after SD operation
+                    screen.ensure_buffer_size();
                 }
                 'm' => {
                     // SGR - set style (colors, bold, etc.)

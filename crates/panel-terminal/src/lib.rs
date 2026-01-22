@@ -464,7 +464,14 @@ impl Terminal {
         theme: &Theme,
     ) -> (Arc<Vec<Line<'static>>>, (usize, usize), bool) {
         // === PHASE 0: Check if we can return cached result ===
-        let (is_dirty, has_selection, sync_output, sync_output_ended, use_alt_screen) = {
+        let (
+            is_dirty,
+            has_selection,
+            sync_output,
+            sync_output_ended,
+            use_alt_screen,
+            force_invalidation,
+        ) = {
             let screen = self.screen.read().expect("Terminal screen lock poisoned");
             (
                 screen.dirty,
@@ -472,8 +479,18 @@ impl Terminal {
                 screen.sync_output,
                 screen.sync_output_ended,
                 screen.use_alt_screen,
+                screen.force_cache_invalidation,
             )
         };
+
+        // Force invalidation takes priority over sync_output caching
+        // This handles ED (clear screen) commands that need immediate visual update
+        if force_invalidation {
+            self.cached_lines = None;
+            if let Ok(mut screen) = self.screen.write() {
+                screen.force_cache_invalidation = false;
+            }
+        }
 
         // Invalidate cache if sync_output just ended (transition from true to false)
         // This flag is set atomically in the CSI handler when processing 2026 'l'
@@ -532,6 +549,8 @@ impl Terminal {
         let mut screen = self.screen.write().expect("Terminal screen lock poisoned");
         // Clear dirty flag since we're about to render
         screen.dirty = false;
+        // Ensure buffer has correct size before rendering (guards against IL/DL edge cases)
+        screen.ensure_buffer_size();
 
         let visible_rows = screen.rows;
         let cols = screen.cols;

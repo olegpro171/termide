@@ -407,6 +407,18 @@ impl TextInput {
         self.cursor_pos += s.chars().count();
     }
 
+    /// Paste text from clipboard (filters control characters)
+    pub fn paste(&mut self, text: &str) {
+        // Filter out control characters except for basic whitespace
+        let filtered: String = text
+            .chars()
+            .filter(|c| !c.is_control() || *c == ' ')
+            .collect();
+        if !filtered.is_empty() {
+            self.insert_str(&filtered);
+        }
+    }
+
     /// Delete character before cursor (backspace)
     pub fn backspace(&mut self) -> bool {
         // Delete selection if present

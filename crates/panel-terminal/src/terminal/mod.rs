@@ -198,6 +198,9 @@ pub struct TerminalScreen {
     /// Flag set when sync_output transitions from true to false
     /// Signals that cached content must be invalidated
     pub sync_output_ended: bool,
+    /// Flag to force cache invalidation on next render
+    /// Set by ED (clear screen) commands to ensure fresh content is shown
+    pub force_cache_invalidation: bool,
 }
 
 impl TerminalScreen {
@@ -232,6 +235,7 @@ impl TerminalScreen {
             scroll_bottom: rows.saturating_sub(1),
             sync_output: false,
             sync_output_ended: false,
+            force_cache_invalidation: false,
         }
     }
 
@@ -548,6 +552,31 @@ impl TerminalScreen {
             } else {
                 self.lines.get(abs_row - scrollback_len)
             }
+        }
+    }
+
+    /// Ensure buffer has exactly `rows` lines, each with `cols` cells.
+    ///
+    /// This fixes buffer size invariant violations that can occur after IL/DL
+    /// operations when rows are inserted/deleted at boundary positions.
+    pub fn ensure_buffer_size(&mut self) {
+        let rows = self.rows;
+        let cols = self.cols;
+        let empty_cell = Cell {
+            ch: ' ',
+            style: CellStyle::default(),
+        };
+
+        let buffer = self.active_buffer_mut();
+
+        // Add missing rows
+        while buffer.len() < rows {
+            buffer.push_back(vec![empty_cell; cols]);
+        }
+
+        // Remove excess rows
+        while buffer.len() > rows {
+            buffer.pop_back();
         }
     }
 }
