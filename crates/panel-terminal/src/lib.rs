@@ -477,7 +477,14 @@ impl Terminal {
 
         // Invalidate cache if sync_output just ended (transition from true to false)
         // This flag is set atomically in the CSI handler when processing 2026 'l'
-        if sync_output_ended {
+        // IMPORTANT: Only invalidate if a new batch hasn't started yet (!sync_output)
+        // This prevents a race condition where:
+        //   1. Batch 1 ends: sync_output=false, sync_output_ended=true
+        //   2. Batch 2 starts immediately: sync_output=true
+        //   3. We read both flags simultaneously: sync_output=true, sync_output_ended=true
+        //   4. Without this check, we'd invalidate cache then fail to return it,
+        //      causing partial batch 2 content to render
+        if sync_output_ended && !sync_output {
             self.cached_lines = None;
             // Clear the flag under write lock
             if let Ok(mut screen) = self.screen.write() {
