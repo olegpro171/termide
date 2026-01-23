@@ -180,6 +180,8 @@ impl Perform for VtPerformer {
                                     buffer[r][c] = empty_cell;
                                 }
                             }
+                            // Force cache invalidation to show cleared content immediately
+                            screen.force_cache_invalidation = true;
                         }
                         1 => {
                             // Clear from start of screen to cursor
@@ -200,6 +202,8 @@ impl Perform for VtPerformer {
                                     buffer[row][i] = empty_cell;
                                 }
                             }
+                            // Force cache invalidation to show cleared content immediately
+                            screen.force_cache_invalidation = true;
                         }
                         2 => {
                             // Clear entire screen and move cursor to (0,0)
@@ -268,6 +272,8 @@ impl Perform for VtPerformer {
                             }
                             _ => {}
                         }
+                        // Force cache invalidation to show erased content immediately
+                        screen.force_cache_invalidation = true;
                     }
                 }
                 'P' => {
@@ -295,6 +301,8 @@ impl Perform for VtPerformer {
                     for i in (cols - n)..cols {
                         buffer[row][i] = empty_cell;
                     }
+                    // Force cache invalidation after character deletion
+                    screen.force_cache_invalidation = true;
                 }
                 'X' => {
                     // ECH - Erase Character
@@ -315,6 +323,8 @@ impl Perform for VtPerformer {
                     for i in col..(col + n).min(cols) {
                         buffer[row][i] = empty_cell;
                     }
+                    // Force cache invalidation after character erasure
+                    screen.force_cache_invalidation = true;
                 }
                 '@' => {
                     // ICH - Insert Character (shift characters right)
@@ -341,6 +351,8 @@ impl Perform for VtPerformer {
                     for i in col..(col + n).min(cols) {
                         buffer[row][i] = empty_cell;
                     }
+                    // Force cache invalidation after character insertion
+                    screen.force_cache_invalidation = true;
                 }
                 'L' => {
                     // IL - Insert Lines (insert blank lines within scroll region)
@@ -380,6 +392,8 @@ impl Perform for VtPerformer {
                     }
                     // Ensure buffer size invariant after IL operation
                     screen.ensure_buffer_size();
+                    // Force cache invalidation after line insertion
+                    screen.force_cache_invalidation = true;
                 }
                 'M' => {
                     // DL - Delete Lines (delete lines within scroll region)
@@ -420,6 +434,8 @@ impl Perform for VtPerformer {
                     }
                     // Ensure buffer size invariant after DL operation
                     screen.ensure_buffer_size();
+                    // Force cache invalidation after line deletion
+                    screen.force_cache_invalidation = true;
                 }
                 'S' => {
                     // SU - Scroll Up (scroll within region)
@@ -462,6 +478,8 @@ impl Perform for VtPerformer {
                     }
                     // Ensure buffer size invariant after SU operation
                     screen.ensure_buffer_size();
+                    // Force cache invalidation after scroll up
+                    screen.force_cache_invalidation = true;
                 }
                 'T' => {
                     // SD - Scroll Down (scroll within region)
@@ -504,6 +522,8 @@ impl Perform for VtPerformer {
                     }
                     // Ensure buffer size invariant after SD operation
                     screen.ensure_buffer_size();
+                    // Force cache invalidation after scroll down
+                    screen.force_cache_invalidation = true;
                 }
                 'm' => {
                     // SGR - set style (colors, bold, etc.)
