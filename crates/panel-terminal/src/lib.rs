@@ -483,7 +483,37 @@ impl Terminal {
             )
         };
 
-        // Force invalidation takes priority over sync_output caching
+        // During sync_output, return cached content to prevent partial frame rendering
+        // Only invalidate cache when sync_output is NOT active
+        // IMPORTANT: Only use cache if it's from the same buffer (main vs alt)
+        if sync_output && self.cached_use_alt_screen == use_alt_screen {
+            // Clear force_invalidation flag but DON'T invalidate cache during batch
+            // This defers invalidation until the batch ends
+            if force_invalidation {
+                if let Ok(mut screen) = self.screen.write() {
+                    screen.force_cache_invalidation = false;
+                }
+            }
+            // Return cached content (previous complete frame)
+            if let Some(ref cached) = self.cached_lines {
+                return (
+                    Arc::clone(cached),
+                    self.cached_cursor,
+                    self.cached_cursor_shown,
+                );
+            }
+            // If no cache exists during sync_output, we must render
+            // This happens on first frame - fall through to regenerate
+        }
+
+        // Invalidate cache if active buffer changed (main <-> alt screen switch)
+        // This prevents showing stale main buffer content over alt screen apps (e.g., Claude Code, htop)
+        if self.cached_use_alt_screen != use_alt_screen {
+            self.cached_lines = None;
+            self.cached_use_alt_screen = use_alt_screen;
+        }
+
+        // Force invalidation when NOT in sync_output
         // This handles ED (clear screen) commands that need immediate visual update
         if force_invalidation {
             self.cached_lines = None;
@@ -492,7 +522,7 @@ impl Terminal {
             }
         }
 
-        // Invalidate cache if sync_output just ended (transition from true to false)
+        // Invalidate cache when sync_output batch ends (transition from true to false)
         // This flag is set atomically in the CSI handler when processing 2026 'l'
         // IMPORTANT: Only invalidate if a new batch hasn't started yet (!sync_output)
         // This prevents a race condition where:
@@ -506,26 +536,6 @@ impl Terminal {
             // Clear the flag under write lock
             if let Ok(mut screen) = self.screen.write() {
                 screen.sync_output_ended = false;
-            }
-        }
-
-        // Invalidate cache if active buffer changed (main <-> alt screen switch)
-        // This prevents showing stale main buffer content over alt screen apps (e.g., Claude Code, htop)
-        if self.cached_use_alt_screen != use_alt_screen {
-            self.cached_lines = None;
-            self.cached_use_alt_screen = use_alt_screen;
-        }
-
-        // Skip rendering while synchronized output is active - return cached
-        // This prevents flickering when applications batch screen updates (e.g., Claude Code/Ink)
-        // IMPORTANT: Only use cache if it's from the same buffer (main vs alt)
-        if sync_output && self.cached_use_alt_screen == use_alt_screen {
-            if let Some(ref cached) = self.cached_lines {
-                return (
-                    Arc::clone(cached),
-                    self.cached_cursor,
-                    self.cached_cursor_shown,
-                );
             }
         }
 
