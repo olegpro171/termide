@@ -2006,6 +2006,17 @@ impl App {
                         self.state.needs_redraw = true;
                     }
                 }
+                OperationEvent::ConflictDetected(id, conflict_info) => {
+                    logger::info(format!(
+                        "Operation {} conflict: {} -> {}",
+                        id,
+                        conflict_info.source.display(),
+                        conflict_info.destination.display()
+                    ));
+                    // TODO: Show ConflictModal and feed resolution back to OperationManager
+                    // For now, just log it
+                    self.state.needs_redraw = true;
+                }
             }
         }
 

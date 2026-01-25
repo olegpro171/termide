@@ -12,9 +12,9 @@ use termide_vfs::VfsManager;
 use crate::queue::{OperationQueue, QueuedOperation};
 use crate::retry::RetryPolicy;
 use crate::types::{
-    BackgroundOperationSummary, OperationControl, OperationError, OperationEvent, OperationId,
-    OperationInfo, OperationPath, OperationPriority, OperationProgress, OperationRequest,
-    OperationResult, OperationType,
+    BackgroundOperationSummary, ConflictMode, ConflictResolution, OperationControl, OperationError,
+    OperationEvent, OperationId, OperationInfo, OperationPath, OperationPriority,
+    OperationProgress, OperationRequest, OperationResult, OperationType,
 };
 use crate::worker::{
     DownloadWorker, LocalCopyWorker, LocalDeleteWorker, OperationWorker, UploadWorker,
@@ -49,6 +49,10 @@ struct ActiveOperation {
     thread_handle: Option<JoinHandle<OperationResult>>,
     /// Progress receiver.
     progress_rx: mpsc::Receiver<OperationProgress>,
+    /// Conflict mode for this operation.
+    conflict_mode: ConflictMode,
+    /// Pending conflict resolution (if operation is waiting for user decision).
+    pending_conflict_resolution: Option<mpsc::Sender<ConflictResolution>>,
 }
 
 /// Central manager for all file operations.
@@ -165,6 +169,7 @@ impl OperationManager {
         let _ = self.event_tx.send(OperationEvent::Started(id));
 
         // Store active operation
+        let conflict_mode = request.conflict_mode;
         let info = OperationInfo {
             id,
             op_type: request.op_type,
@@ -181,6 +186,8 @@ impl OperationManager {
                 info,
                 thread_handle: Some(thread_handle),
                 progress_rx,
+                conflict_mode,
+                pending_conflict_resolution: None,
             },
         );
 
@@ -441,6 +448,38 @@ impl OperationManager {
     /// Change priority of a queued operation.
     pub fn set_priority(&mut self, id: OperationId, priority: OperationPriority) -> bool {
         self.queue.set_priority(id, priority)
+    }
+
+    /// Resolve a conflict for an operation waiting for user decision.
+    ///
+    /// Returns `true` if the resolution was sent successfully.
+    pub fn resolve_conflict(&mut self, id: OperationId, resolution: ConflictResolution) -> bool {
+        if let Some(op) = self.active.get_mut(&id) {
+            // Update conflict mode for "All" resolutions
+            match resolution {
+                ConflictResolution::OverwriteAll => {
+                    op.conflict_mode = ConflictMode::OverwriteAll;
+                }
+                ConflictResolution::SkipAll => {
+                    op.conflict_mode = ConflictMode::SkipAll;
+                }
+                _ => {}
+            }
+
+            // Send resolution to waiting worker
+            if let Some(ref tx) = op.pending_conflict_resolution {
+                if tx.send(resolution).is_ok() {
+                    op.pending_conflict_resolution = None;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Get the current conflict mode for an operation.
+    pub fn conflict_mode(&self, id: OperationId) -> Option<ConflictMode> {
+        self.active.get(&id).map(|op| op.conflict_mode)
     }
 
     /// Get a summary of all background operations for status bar display.

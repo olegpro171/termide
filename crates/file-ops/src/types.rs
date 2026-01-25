@@ -333,6 +333,54 @@ pub enum OperationEvent {
     Paused(OperationId),
     /// Operation resumed.
     Resumed(OperationId),
+    /// Conflict detected - operation waiting for user decision.
+    ConflictDetected(OperationId, ConflictInfo),
+}
+
+/// Information about a file conflict.
+#[derive(Debug, Clone)]
+pub struct ConflictInfo {
+    /// Source file path.
+    pub source: OperationPath,
+    /// Destination file path (existing file).
+    pub destination: OperationPath,
+    /// Source file size in bytes.
+    pub source_size: u64,
+    /// Destination file size in bytes.
+    pub dest_size: u64,
+    /// Source file modification time (Unix timestamp).
+    pub source_modified: Option<u64>,
+    /// Destination file modification time (Unix timestamp).
+    pub dest_modified: Option<u64>,
+    /// Number of remaining items in the batch.
+    pub remaining_items: usize,
+}
+
+/// User's decision for handling a conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictResolution {
+    /// Overwrite the destination file.
+    Overwrite,
+    /// Skip this file.
+    Skip,
+    /// Overwrite all remaining conflicts.
+    OverwriteAll,
+    /// Skip all remaining conflicts.
+    SkipAll,
+    /// Cancel the entire operation.
+    Cancel,
+}
+
+/// Conflict handling mode for batch operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConflictMode {
+    /// Ask the user for each conflict.
+    #[default]
+    Ask,
+    /// Automatically overwrite all conflicts.
+    OverwriteAll,
+    /// Automatically skip all conflicts.
+    SkipAll,
 }
 
 /// Request to create a new operation.
@@ -348,6 +396,8 @@ pub struct OperationRequest {
     pub priority: OperationPriority,
     /// Whether this is a move operation (delete source after copy).
     pub is_move: bool,
+    /// How to handle file conflicts.
+    pub conflict_mode: ConflictMode,
 }
 
 impl OperationRequest {
@@ -359,6 +409,7 @@ impl OperationRequest {
             destination: Some(destination),
             priority: OperationPriority::Normal,
             is_move: false,
+            conflict_mode: ConflictMode::Ask,
         }
     }
 
@@ -370,6 +421,7 @@ impl OperationRequest {
             destination: Some(destination),
             priority: OperationPriority::Normal,
             is_move: true,
+            conflict_mode: ConflictMode::Ask,
         }
     }
 
@@ -381,6 +433,7 @@ impl OperationRequest {
             destination: None,
             priority: OperationPriority::Normal,
             is_move: false,
+            conflict_mode: ConflictMode::Ask,
         }
     }
 
@@ -392,6 +445,7 @@ impl OperationRequest {
             destination: Some(OperationPath::Local(local)),
             priority: OperationPriority::Normal,
             is_move: false,
+            conflict_mode: ConflictMode::Ask,
         }
     }
 
@@ -403,12 +457,19 @@ impl OperationRequest {
             destination: Some(OperationPath::Remote(remote)),
             priority: OperationPriority::Normal,
             is_move: false,
+            conflict_mode: ConflictMode::Ask,
         }
     }
 
     /// Set the priority.
     pub fn with_priority(mut self, priority: OperationPriority) -> Self {
         self.priority = priority;
+        self
+    }
+
+    /// Set the conflict handling mode.
+    pub fn with_conflict_mode(mut self, mode: ConflictMode) -> Self {
+        self.conflict_mode = mode;
         self
     }
 }

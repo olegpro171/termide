@@ -161,6 +161,7 @@ mod tests {
             destination: Some(OperationPath::local("/dest")),
             priority,
             is_move: false,
+            conflict_mode: crate::types::ConflictMode::Ask,
         }
     }
 
