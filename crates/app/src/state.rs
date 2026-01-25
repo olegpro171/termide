@@ -148,7 +148,12 @@ impl std::fmt::Debug for UploadOperation {
     }
 }
 
-/// State for async batch copy/move download operation (remote→local) with progress and pause/cancel
+/// State for async batch copy/move download operation (remote→local) with progress and pause/cancel.
+///
+/// DEPRECATED: Use `OperationManager` with `DownloadWorker` instead.
+/// This type is kept for backward compatibility during migration.
+#[deprecated(note = "Use OperationManager with DownloadWorker instead")]
+#[allow(deprecated)]
 pub struct BatchDownloadOperation {
     /// VFS download operation handle with progress and pause/cancel
     pub operation: termide_vfs::VfsDownloadOperation,
@@ -168,6 +173,7 @@ pub struct BatchDownloadOperation {
     pub last_total_bytes: u64,
 }
 
+#[allow(deprecated)]
 impl std::fmt::Debug for BatchDownloadOperation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BatchDownloadOperation")
@@ -211,6 +217,25 @@ impl std::fmt::Debug for BatchUploadOperation {
             .field("is_move", &self.is_move)
             .field("current_index", &self.current_index)
             .field("total_files", &self.all_sources.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Pending remote delete for move operations (delete source after download completes).
+///
+/// When downloading from remote with is_move=true, we need to delete the source
+/// after the download succeeds. This stores the VFS info needed for that deletion.
+pub struct PendingRemoteDelete {
+    /// VFS source path to delete
+    pub vfs_source: termide_vfs::VfsPath,
+    /// VFS manager for the delete operation
+    pub vfs_manager: std::sync::Arc<termide_vfs::VfsManager>,
+}
+
+impl std::fmt::Debug for PendingRemoteDelete {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingRemoteDelete")
+            .field("vfs_source", &self.vfs_source.to_url_string())
             .finish_non_exhaustive()
     }
 }
@@ -407,6 +432,7 @@ pub struct AppState {
     /// Handle for async remote file upload operation
     pub upload_operation: Option<UploadOperation>,
     /// Handle for async batch copy download operation (remote→local)
+    #[allow(deprecated)]
     pub batch_download_operation: Option<BatchDownloadOperation>,
     /// Handle for async local file copy operation with progress
     #[allow(deprecated)]
@@ -422,6 +448,8 @@ pub struct AppState {
     pub vfs_upload_state: Option<VfsUploadState>,
     /// Handle for async batch upload operation (local→remote multiple files)
     pub batch_upload_operation: Option<BatchUploadOperation>,
+    /// Pending remote delete for move operations (delete source after download)
+    pub pending_remote_delete: Option<PendingRemoteDelete>,
     /// Unified watcher for filesystem and git changes
     pub watcher: Option<UnifiedWatcher>,
     /// Current theme
@@ -506,6 +534,7 @@ impl AppState {
             local_delete_operation: None,
             vfs_upload_state: None,
             batch_upload_operation: None,
+            pending_remote_delete: None,
             watcher: None,
             theme,
             config,

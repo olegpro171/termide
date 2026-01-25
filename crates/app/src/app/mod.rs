@@ -1309,6 +1309,7 @@ impl App {
     }
 
     /// Check batch download operation result (remote→local file copy/move during batch operations)
+    #[allow(deprecated)]
     fn check_batch_download_result(&mut self) {
         use crate::state::PendingAction;
         use std::sync::atomic::Ordering;
@@ -1984,6 +1985,22 @@ impl App {
                             logger::info(format!("Operation {} completed successfully", id));
                             should_refresh_file_managers = true;
 
+                            // Handle remote delete for move operations (delete source after download)
+                            if let Some(pending_delete) = self.state.pending_remote_delete.take() {
+                                // Start async delete operation (fire and forget)
+                                let delete_op = pending_delete
+                                    .vfs_manager
+                                    .delete(&pending_delete.vfs_source);
+                                std::thread::spawn(move || {
+                                    if let Err(e) = delete_op.recv() {
+                                        termide_logger::error(format!(
+                                            "Failed to delete remote source after move: {}",
+                                            e
+                                        ));
+                                    }
+                                });
+                            }
+
                             // Continue batch operation if pending
                             if has_batch {
                                 if let Some(PendingAction::ContinueBatchOperation {
@@ -2036,6 +2053,9 @@ impl App {
                         OperationResult::Failed(err) => {
                             logger::error(format!("Operation {} failed: {}", id, err));
 
+                            // Clear pending remote delete (don't delete source if download failed)
+                            self.state.pending_remote_delete = None;
+
                             // Continue batch operation if pending
                             if has_batch {
                                 if let Some(PendingAction::ContinueBatchOperation {
@@ -2052,6 +2072,9 @@ impl App {
                         }
                         OperationResult::Cancelled => {
                             logger::info(format!("Operation {} cancelled", id));
+
+                            // Clear pending remote delete (don't delete source if download cancelled)
+                            self.state.pending_remote_delete = None;
 
                             // For batch operations, show cleanup modal
                             if has_batch {

@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use super::super::App;
 use crate::state::{
-    ActiveModal, BatchDownloadOperation, BatchOperation, BatchOperationType, ConflictMode,
-    PendingAction,
+    ActiveModal, BatchOperation, BatchOperationType, ConflictMode, PendingAction,
+    PendingRemoteDelete,
 };
 use crate::PanelExt;
 use termide_i18n as i18n;
@@ -299,9 +299,11 @@ impl App {
                                 self.state.active_modal =
                                     Some(ActiveModal::Progress(Box::new(modal)));
 
-                                // Check if source is remote - use VFS download instead of local copy/move
+                                // Check if source is remote - use OperationManager download
                                 if fm.is_remote() {
-                                    // For remote-to-local copy/move, use VFS download (async)
+                                    use termide_file_ops::OperationRequest;
+
+                                    // For remote-to-local copy/move, use VFS download via OperationManager
                                     let source_name = source
                                         .file_name()
                                         .map(|n| n.to_string_lossy().to_string())
@@ -310,37 +312,42 @@ impl App {
                                         fm.vfs_state().current_path().join(&source_name);
                                     let vfs_manager = fm.vfs_state().manager_arc();
 
-                                    // Start async download with progress and pause/cancel support
-                                    let download_op = vfs_manager
-                                        .download_with_progress(&vfs_source, &final_dest);
-
                                     let is_move =
                                         operation.operation_type == BatchOperationType::Move;
 
-                                    // Store operation for async handling
-                                    self.state.batch_download_operation =
-                                        Some(BatchDownloadOperation {
-                                            operation: download_op,
-                                            dest_path: final_dest.clone(),
-                                            started: std::time::Instant::now(),
-                                            is_move,
-                                            vfs_source: if is_move {
-                                                Some(vfs_source)
-                                            } else {
-                                                None
-                                            },
-                                            vfs_manager: if is_move {
-                                                Some(vfs_manager)
-                                            } else {
-                                                None
-                                            },
-                                            last_total_files: 0,
-                                            last_total_bytes: 0,
-                                        });
+                                    // Create download request
+                                    let request =
+                                        OperationRequest::download(vfs_source.clone(), final_dest);
 
-                                    // Store batch operation as pending action for continuation after download
-                                    self.state.pending_action =
-                                        Some(PendingAction::ContinueBatchOperation { operation });
+                                    // Store VFS info for move operation (delete source after download)
+                                    if is_move {
+                                        self.state.pending_remote_delete =
+                                            Some(PendingRemoteDelete {
+                                                vfs_source,
+                                                vfs_manager: vfs_manager.clone(),
+                                            });
+                                    }
+
+                                    match self.state.start_operation_now(request, vfs_manager) {
+                                        Ok(_operation_id) => {
+                                            self.state.pending_action =
+                                                Some(PendingAction::ContinueBatchOperation {
+                                                    operation,
+                                                });
+                                        }
+                                        Err(e) => {
+                                            termide_logger::error(format!(
+                                                "Failed to start download operation: {}",
+                                                e
+                                            ));
+                                            operation.increment_error();
+                                            operation.advance();
+                                            self.state.pending_action =
+                                                Some(PendingAction::ContinueBatchOperation {
+                                                    operation,
+                                                });
+                                        }
+                                    }
                                     return Ok(());
                                 }
 
@@ -792,10 +799,11 @@ impl App {
         // Execute operation
         if let Some(panel) = self.layout_manager.active_panel_mut() {
             if let Some(fm) = panel.as_file_manager_mut() {
-                // Check if source is remote - use VFS download instead of local copy
+                // Check if source is remote - use OperationManager download
                 if fm.is_remote() {
-                    // For remote-to-local copy/move, use VFS download (async)
-                    // Construct VfsPath from current VFS path + source filename
+                    use termide_file_ops::OperationRequest;
+
+                    // For remote-to-local copy/move, use VFS download via OperationManager
                     let source_name = source
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
@@ -803,26 +811,35 @@ impl App {
                     let vfs_source = fm.vfs_state().current_path().join(&source_name);
                     let vfs_manager = fm.vfs_state().manager_arc();
 
-                    // Start async download with progress and pause/cancel support
-                    let download_op = vfs_manager.download_with_progress(&vfs_source, &final_dest);
-
                     let is_move = operation.operation_type == BatchOperationType::Move;
 
-                    // Store operation for async handling
-                    self.state.batch_download_operation = Some(BatchDownloadOperation {
-                        operation: download_op,
-                        dest_path: final_dest.clone(),
-                        started: std::time::Instant::now(),
-                        is_move,
-                        vfs_source: if is_move { Some(vfs_source) } else { None },
-                        vfs_manager: if is_move { Some(vfs_manager) } else { None },
-                        last_total_files: 0,
-                        last_total_bytes: 0,
-                    });
+                    // Create download request
+                    let request = OperationRequest::download(vfs_source.clone(), final_dest);
 
-                    // Store batch operation as pending action for continuation after download
-                    self.state.pending_action =
-                        Some(PendingAction::ContinueBatchOperation { operation });
+                    // Store VFS info for move operation (delete source after download)
+                    if is_move {
+                        self.state.pending_remote_delete = Some(PendingRemoteDelete {
+                            vfs_source,
+                            vfs_manager: vfs_manager.clone(),
+                        });
+                    }
+
+                    match self.state.start_operation_now(request, vfs_manager) {
+                        Ok(_operation_id) => {
+                            self.state.pending_action =
+                                Some(PendingAction::ContinueBatchOperation { operation });
+                        }
+                        Err(e) => {
+                            termide_logger::error(format!(
+                                "Failed to start download operation: {}",
+                                e
+                            ));
+                            operation.increment_error();
+                            operation.advance();
+                            self.state.pending_action =
+                                Some(PendingAction::ContinueBatchOperation { operation });
+                        }
+                    }
                     return;
                 }
 
