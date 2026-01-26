@@ -535,6 +535,19 @@ impl HelpGenerator {
         let key_style = Style::default().fg(theme.fg);
         let desc_style = Style::default().fg(theme.disabled);
 
+        // Version header: ═══════ Termide 0.10.1 ═══════
+        let version = env!("CARGO_PKG_VERSION");
+        let version_text = format!("Termide {}", version);
+        let version_len = version_text.chars().count();
+        let side_padding = width.saturating_sub(version_len + 2) / 2; // +2 for spaces around text
+        let left_pad = "═".repeat(side_padding);
+        let right_pad = "═".repeat(width.saturating_sub(side_padding + version_len + 2));
+        lines.push(Line::styled(
+            format!("{} {} {}", left_pad, version_text, right_pad),
+            header_style,
+        ));
+        lines.push(Line::from(""));
+
         for section in sections {
             if section.entries.is_empty() {
                 continue;
