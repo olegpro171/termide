@@ -501,21 +501,38 @@ impl Modal for BookmarkAddModal {
                             if self.selected_group_index > 0 {
                                 self.selected_group_index -= 1;
                             }
+                            // Immediately update input with selected value
+                            if let Some(group) = self.existing_groups.get(self.selected_group_index)
+                            {
+                                self.group_input = TextInputHandler::with_default(group.clone());
+                            }
                         }
                         KeyCode::Down => {
                             if self.selected_group_index < self.existing_groups.len() - 1 {
                                 self.selected_group_index += 1;
                             }
-                        }
-                        KeyCode::Enter => {
-                            // Select group from dropdown
+                            // Immediately update input with selected value
                             if let Some(group) = self.existing_groups.get(self.selected_group_index)
                             {
                                 self.group_input = TextInputHandler::with_default(group.clone());
                             }
+                        }
+                        KeyCode::Enter => {
+                            // Just close dropdown (value already in input)
                             self.show_group_dropdown = false;
                         }
-                        _ => {}
+                        _ => {
+                            // Allow typing even with dropdown open
+                            match handle_input_key(&mut self.group_input, key) {
+                                InputKeyResult::TextModified => {
+                                    // Close dropdown when user types
+                                    self.show_group_dropdown = false;
+                                    return Ok(None);
+                                }
+                                InputKeyResult::Handled => return Ok(None),
+                                InputKeyResult::NotHandled => {}
+                            }
+                        }
                     }
                 } else {
                     // Try common input handling first
