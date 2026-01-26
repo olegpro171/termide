@@ -50,9 +50,9 @@ pub enum OperationType {
     Move,
     /// Delete file(s).
     Delete,
-    /// Download from remote to local.
+    /// Download from remote to local (single or multiple files).
     Download,
-    /// Upload from local to remote.
+    /// Upload from local to remote (single or multiple files).
     Upload,
 }
 
@@ -138,7 +138,7 @@ impl From<VfsPath> for OperationPath {
 pub struct OperationProgress {
     /// Current phase of the operation.
     pub phase: OperationPhase,
-    /// Bytes transferred so far.
+    /// Bytes transferred so far (overall).
     pub bytes_transferred: u64,
     /// Total bytes to transfer (0 if unknown).
     pub total_bytes: u64,
@@ -152,6 +152,10 @@ pub struct OperationProgress {
     pub speed_bps: f64,
     /// Estimated time remaining in seconds.
     pub eta_seconds: Option<u64>,
+    /// Current individual file bytes transferred (for batch operations).
+    pub individual_file_bytes: u64,
+    /// Current individual file total bytes (for batch operations).
+    pub individual_file_total: u64,
 }
 
 impl Default for OperationProgress {
@@ -165,6 +169,8 @@ impl Default for OperationProgress {
             current_item: None,
             speed_bps: 0.0,
             eta_seconds: None,
+            individual_file_bytes: 0,
+            individual_file_total: 0,
         }
     }
 }
@@ -275,6 +281,8 @@ pub enum OperationResult {
         skipped: usize,
         /// Number of items that failed.
         failed: usize,
+        /// List of failed file paths with error messages.
+        failed_files: Vec<String>,
     },
     /// Operation failed.
     Failed(String),
@@ -369,16 +377,20 @@ pub struct ConflictInfo {
 }
 
 /// User's decision for handling a conflict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictResolution {
     /// Overwrite the destination file.
     Overwrite,
     /// Skip this file.
     Skip,
+    /// Rename this file to the given name.
+    Rename(String),
     /// Overwrite all remaining conflicts.
     OverwriteAll,
     /// Skip all remaining conflicts.
     SkipAll,
+    /// Rename all remaining conflicts with auto-generated names.
+    RenameAll,
     /// Cancel the entire operation.
     Cancel,
 }
@@ -393,6 +405,8 @@ pub enum ConflictMode {
     OverwriteAll,
     /// Automatically skip all conflicts.
     SkipAll,
+    /// Automatically rename all conflicts with auto-generated names.
+    RenameAll,
 }
 
 /// Request to create a new operation.
@@ -627,16 +641,30 @@ impl BackgroundOperationSummary {
         }
 
         let percent = (self.percentage() * 100.0) as u8;
-        let count = self.active_count + self.queued_count;
 
-        if count == 1 {
+        if self.active_count == 1 && self.queued_count == 0 {
+            // Single active operation, no queue
             if let Some(ref activity) = self.current_activity {
                 format!("{} {}%", activity, percent)
             } else {
                 format!("Operation {}%", percent)
             }
+        } else if self.active_count == 0 && self.queued_count > 0 {
+            // Only queued operations (waiting)
+            format!("{} queued", self.queued_count)
+        } else if self.queued_count > 0 {
+            // Active + queued
+            if let Some(ref activity) = self.current_activity {
+                format!("{} {}% (+{} queued)", activity, percent, self.queued_count)
+            } else {
+                format!(
+                    "{} active {}% (+{} queued)",
+                    self.active_count, percent, self.queued_count
+                )
+            }
         } else {
-            format!("{} ops {}%", count, percent)
+            // Multiple active, no queue
+            format!("{} ops {}%", self.active_count, percent)
         }
     }
 

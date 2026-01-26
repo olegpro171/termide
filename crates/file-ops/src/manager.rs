@@ -17,8 +17,8 @@ use crate::types::{
     OperationProgress, OperationRequest, OperationResult, OperationType,
 };
 use crate::worker::{
-    ConflictContext, DownloadWorker, LocalCopyWorker, LocalDeleteWorker, OperationWorker,
-    UploadWorker,
+    ConflictContext, CrossProtocolWorker, DownloadWorker, LocalCopyWorker, LocalDeleteWorker,
+    OperationWorker, RemoteDeleteWorker, UploadWorker,
 };
 
 /// Configuration for the operation manager.
@@ -253,14 +253,32 @@ impl OperationManager {
                         request.is_move,
                     )))
                 } else {
-                    Err(OperationError::Invalid(
-                        "Cross-protocol copy not yet supported".to_string(),
-                    ))
+                    // Cross-protocol copy/move
+                    // Currently supports single source
+                    let source = request.sources.first().ok_or_else(|| {
+                        OperationError::Invalid(
+                            "Copy/Move requires at least one source".to_string(),
+                        )
+                    })?;
+
+                    let destination = request.destination.as_ref().ok_or_else(|| {
+                        OperationError::Invalid("Copy/Move requires destination".to_string())
+                    })?;
+
+                    let worker = CrossProtocolWorker::new(
+                        Arc::clone(&self.vfs_manager),
+                        source.clone(),
+                        destination.clone(),
+                        request.is_move,
+                    )?;
+
+                    Ok(Box::new(worker))
                 }
             }
 
             OperationType::Delete => {
                 let all_local = request.sources.iter().all(|p| p.is_local());
+                let all_remote = request.sources.iter().all(|p| p.is_remote());
 
                 if all_local {
                     let paths: Vec<PathBuf> = request
@@ -273,24 +291,45 @@ impl OperationManager {
                         .collect();
 
                     Ok(Box::new(LocalDeleteWorker::new(paths)))
+                } else if all_remote {
+                    let paths: Vec<termide_vfs::VfsPath> = request
+                        .sources
+                        .iter()
+                        .filter_map(|p| match p {
+                            OperationPath::Remote(path) => Some(path.clone()),
+                            _ => None,
+                        })
+                        .collect();
+
+                    Ok(Box::new(RemoteDeleteWorker::new(
+                        Arc::clone(&self.vfs_manager),
+                        paths,
+                    )))
                 } else {
                     Err(OperationError::Invalid(
-                        "Remote delete not yet supported via manager".to_string(),
+                        "Mixed local/remote delete not supported".to_string(),
                     ))
                 }
             }
 
             OperationType::Download => {
-                let remote = match request.sources.first() {
-                    Some(OperationPath::Remote(path)) => path.clone(),
-                    _ => {
-                        return Err(OperationError::Invalid(
-                            "Download requires remote source".to_string(),
-                        ))
-                    }
-                };
+                // Get all remote sources
+                let sources: Vec<termide_vfs::VfsPath> = request
+                    .sources
+                    .iter()
+                    .filter_map(|p| match p {
+                        OperationPath::Remote(path) => Some(path.clone()),
+                        _ => None,
+                    })
+                    .collect();
 
-                let local = match &request.destination {
+                if sources.is_empty() {
+                    return Err(OperationError::Invalid(
+                        "Download requires remote source(s)".to_string(),
+                    ));
+                }
+
+                let dest_dir = match &request.destination {
                     Some(OperationPath::Local(path)) => path.clone(),
                     _ => {
                         return Err(OperationError::Invalid(
@@ -301,22 +340,30 @@ impl OperationManager {
 
                 Ok(Box::new(DownloadWorker::new(
                     Arc::clone(&self.vfs_manager),
-                    remote,
-                    local,
+                    sources,
+                    dest_dir,
+                    request.is_move,
                 )))
             }
 
             OperationType::Upload => {
-                let local = match request.sources.first() {
-                    Some(OperationPath::Local(path)) => path.clone(),
-                    _ => {
-                        return Err(OperationError::Invalid(
-                            "Upload requires local source".to_string(),
-                        ))
-                    }
-                };
+                // Get all local sources
+                let sources: Vec<PathBuf> = request
+                    .sources
+                    .iter()
+                    .filter_map(|p| match p {
+                        OperationPath::Local(path) => Some(path.clone()),
+                        _ => None,
+                    })
+                    .collect();
 
-                let remote = match &request.destination {
+                if sources.is_empty() {
+                    return Err(OperationError::Invalid(
+                        "Upload requires local source(s)".to_string(),
+                    ));
+                }
+
+                let dest_base = match &request.destination {
                     Some(OperationPath::Remote(path)) => path.clone(),
                     _ => {
                         return Err(OperationError::Invalid(
@@ -327,8 +374,9 @@ impl OperationManager {
 
                 Ok(Box::new(UploadWorker::new(
                     Arc::clone(&self.vfs_manager),
-                    local,
-                    remote,
+                    sources,
+                    dest_base,
+                    request.is_move,
                 )))
             }
         }
@@ -475,12 +523,15 @@ impl OperationManager {
     pub fn resolve_conflict(&mut self, id: OperationId, resolution: ConflictResolution) -> bool {
         if let Some(op) = self.active.get_mut(&id) {
             // Update conflict mode for "All" resolutions
-            match resolution {
+            match &resolution {
                 ConflictResolution::OverwriteAll => {
                     op.conflict_mode = ConflictMode::OverwriteAll;
                 }
                 ConflictResolution::SkipAll => {
                     op.conflict_mode = ConflictMode::SkipAll;
+                }
+                ConflictResolution::RenameAll => {
+                    op.conflict_mode = ConflictMode::RenameAll;
                 }
                 _ => {}
             }
