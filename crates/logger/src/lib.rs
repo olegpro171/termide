@@ -168,6 +168,16 @@ impl Logger {
     fn get_entries(&self) -> Vec<LogEntry> {
         self.entries.iter().cloned().collect()
     }
+
+    /// Get the total number of entries
+    fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Get entries starting from a specific index (returns clones of only new entries)
+    fn get_entries_from(&self, start_idx: usize) -> Vec<LogEntry> {
+        self.entries.iter().skip(start_idx).cloned().collect()
+    }
 }
 
 /// Global logger instance that persists for the application lifetime.
@@ -235,6 +245,29 @@ pub fn init(file_path: PathBuf, max_entries: usize, min_level: LogLevel) {
 pub fn get_entries() -> Vec<LogEntry> {
     if let Ok(logger) = get_logger().lock() {
         logger.get_entries()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Get the total number of log entries
+///
+/// Returns the count without cloning any entries.
+pub fn entry_count() -> usize {
+    if let Ok(logger) = get_logger().lock() {
+        logger.entry_count()
+    } else {
+        0
+    }
+}
+
+/// Get log entries starting from a specific index
+///
+/// Returns only entries from `start_idx` onwards, avoiding cloning earlier entries.
+/// Used for incremental synchronization with panels.
+pub fn get_entries_from(start_idx: usize) -> Vec<LogEntry> {
+    if let Ok(logger) = get_logger().lock() {
+        logger.get_entries_from(start_idx)
     } else {
         Vec::new()
     }

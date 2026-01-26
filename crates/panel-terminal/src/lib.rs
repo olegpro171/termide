@@ -27,6 +27,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 use std::any::Any;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -769,26 +770,37 @@ impl Terminal {
             }
         };
 
-        // Extract URL highlighting segments before the render loop
-        let url_segments: Option<&Vec<HighlightSegment>> = if self.ctrl_pressed {
-            self.hovered_link.as_ref().map(|(_, segments)| segments)
+        // Pre-index URL segments by row for O(1) lookup per row
+        // Instead of iterating all segments for each cell, we build a HashMap<row, Vec<(start, end)>>
+        let url_segments_by_row: HashMap<usize, Vec<(usize, usize)>> = if self.ctrl_pressed {
+            if let Some((_, segments)) = &self.hovered_link {
+                let mut map: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+                for &(row, start, end) in segments {
+                    map.entry(row).or_default().push((start, end));
+                }
+                map
+            } else {
+                HashMap::new()
+            }
         } else {
-            None
+            HashMap::new()
         };
 
-        // Helper to check if cell is in hovered URL (checks all segments)
+        // Helper to check if cell is in hovered URL (O(1) row lookup, then check ranges)
         let is_in_url = |visual_row: usize, col: usize| -> bool {
-            if let Some(segments) = url_segments {
-                // Convert visual row to absolute
-                let abs_row = if scrollback_slice {
-                    view_start + visual_row
-                } else {
-                    scrollback_len + visual_row
-                };
+            if url_segments_by_row.is_empty() {
+                return false;
+            }
+            // Convert visual row to absolute
+            let abs_row = if scrollback_slice {
+                view_start + visual_row
+            } else {
+                scrollback_len + visual_row
+            };
 
-                segments
-                    .iter()
-                    .any(|(row, start, end)| abs_row == *row && col >= *start && col < *end)
+            // O(1) lookup for the row, then check ranges (typically 1-2 per row)
+            if let Some(ranges) = url_segments_by_row.get(&abs_row) {
+                ranges.iter().any(|&(start, end)| col >= start && col < end)
             } else {
                 false
             }

@@ -57,16 +57,22 @@ impl JournalPanel {
     }
 
     /// Sync log entries from logger to buffer.
+    ///
+    /// Uses incremental synchronization: only fetches new entries since
+    /// the last sync, avoiding O(n) clone of all log entries.
     fn sync_logs(&mut self) {
-        let entries = termide_logger::get_entries();
-        let new_count = entries.len();
+        // First check if there are new entries (O(1) operation)
+        let new_count = termide_logger::entry_count();
 
         if new_count > self.last_synced_count {
+            // Only fetch entries we haven't synced yet
+            let new_entries = termide_logger::get_entries_from(self.last_synced_count);
+
             // Get buffer access through editor
             let buffer = self.editor.buffer_mut();
 
             // Append new entries
-            for entry in entries.iter().skip(self.last_synced_count) {
+            for entry in &new_entries {
                 let level_text = match entry.level {
                     LogLevel::Debug => "DEBUG",
                     LogLevel::Info => "INFO ",

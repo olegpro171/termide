@@ -135,20 +135,17 @@ impl LogHighlightCache {
     }
 
     /// Evict oldest entries from cache (LRU).
+    ///
+    /// Uses a threshold-based approach: remove all entries with access time
+    /// below a calculated threshold. This avoids O(n log n) sorting.
     fn evict_lru(&mut self) {
-        let evict_count = MAX_CACHE_SIZE / 5;
+        // Calculate threshold: keep entries accessed in the recent 80% of accesses
+        let threshold = self
+            .access_counter
+            .saturating_sub(MAX_CACHE_SIZE as u64 * 4 / 5);
 
-        let mut entries: Vec<(usize, u64)> = self
-            .lines
-            .iter()
-            .map(|(idx, (_, access))| (*idx, *access))
-            .collect();
-
-        entries.sort_by_key(|(_, access)| *access);
-
-        for (idx, _) in entries.iter().take(evict_count) {
-            self.lines.remove(idx);
-        }
+        // Use retain for efficient in-place removal
+        self.lines.retain(|_, (_, access)| *access > threshold);
     }
 }
 
@@ -178,11 +175,8 @@ impl LineHighlighter for LogHighlightCache {
     }
 
     fn invalidate_from(&mut self, line: usize) {
-        let lines_to_remove: Vec<usize> =
-            self.lines.keys().filter(|&&l| l >= line).copied().collect();
-        for idx in lines_to_remove {
-            self.lines.remove(&idx);
-        }
+        // Use retain for efficient in-place removal (O(n) single pass)
+        self.lines.retain(|&idx, _| idx < line);
     }
 
     fn invalidate_all(&mut self) {

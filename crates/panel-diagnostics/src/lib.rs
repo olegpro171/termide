@@ -132,6 +132,16 @@ pub struct DiagnosticsPanel {
     last_height: usize,
     /// Cached vim_mode setting for keyboard handling
     vim_mode: bool,
+    /// Cached filtered diagnostics (indices into all_diagnostics)
+    cached_filtered_indices: Vec<usize>,
+    /// Whether filtered cache is valid
+    filter_cache_valid: bool,
+    /// Cached error count
+    cached_error_count: usize,
+    /// Cached warning count
+    cached_warning_count: usize,
+    /// Whether counts cache is valid
+    counts_cache_valid: bool,
 }
 
 impl DiagnosticsPanel {
@@ -146,6 +156,11 @@ impl DiagnosticsPanel {
             cached_theme: *theme,
             last_height: 10,
             vim_mode: false,
+            cached_filtered_indices: Vec::new(),
+            filter_cache_valid: false,
+            cached_error_count: 0,
+            cached_warning_count: 0,
+            counts_cache_valid: false,
         }
     }
 
@@ -177,6 +192,12 @@ impl DiagnosticsPanel {
         self.all_diagnostics.clear();
         self.selected_index = 0;
         self.scroll_offset = 0;
+        // Invalidate caches
+        self.filter_cache_valid = false;
+        self.counts_cache_valid = false;
+        self.cached_filtered_indices.clear();
+        self.cached_error_count = 0;
+        self.cached_warning_count = 0;
     }
 
     /// Rebuild flattened list from diagnostics by file.
@@ -200,21 +221,56 @@ impl DiagnosticsPanel {
         if self.selected_index >= self.all_diagnostics.len() {
             self.selected_index = self.all_diagnostics.len().saturating_sub(1);
         }
+
+        // Invalidate caches
+        self.filter_cache_valid = false;
+        self.counts_cache_valid = false;
     }
 
-    /// Get filtered diagnostics.
-    fn filtered_diagnostics(&self) -> Vec<(usize, &DiagnosticEntry)> {
-        self.all_diagnostics
+    /// Ensure filtered diagnostics cache is valid.
+    fn ensure_filtered_cache(&mut self) {
+        if !self.filter_cache_valid {
+            self.cached_filtered_indices = self
+                .all_diagnostics
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| self.filter.matches(e.severity))
+                .map(|(idx, _)| idx)
+                .collect();
+            self.filter_cache_valid = true;
+        }
+    }
+
+    /// Get filtered diagnostics count (uses cache).
+    fn filtered_count(&mut self) -> usize {
+        self.ensure_filtered_cache();
+        self.cached_filtered_indices.len()
+    }
+
+    /// Get filtered diagnostic at display index.
+    fn filtered_entry(&mut self, display_idx: usize) -> Option<(usize, &DiagnosticEntry)> {
+        self.ensure_filtered_cache();
+        self.cached_filtered_indices
+            .get(display_idx)
+            .map(|&orig_idx| (orig_idx, &self.all_diagnostics[orig_idx]))
+    }
+
+    /// Get filtered diagnostics indices for the visible range.
+    /// Returns Vec of (display_idx, orig_idx) for the visible range.
+    fn get_visible_filtered_indices(&mut self, skip: usize, take: usize) -> Vec<(usize, usize)> {
+        self.ensure_filtered_cache();
+        self.cached_filtered_indices
             .iter()
+            .skip(skip)
+            .take(take)
+            .copied()
             .enumerate()
-            .filter(|(_, e)| self.filter.matches(e.severity))
             .collect()
     }
 
     /// Get currently selected diagnostic entry.
-    pub fn selected_entry(&self) -> Option<&DiagnosticEntry> {
-        let filtered = self.filtered_diagnostics();
-        filtered.get(self.selected_index).map(|(_, e)| *e)
+    pub fn selected_entry(&mut self) -> Option<&DiagnosticEntry> {
+        self.filtered_entry(self.selected_index).map(|(_, e)| e)
     }
 
     /// Move selection up.
@@ -227,8 +283,8 @@ impl DiagnosticsPanel {
 
     /// Move selection down.
     fn select_next(&mut self) {
-        let filtered = self.filtered_diagnostics();
-        if self.selected_index + 1 < filtered.len() {
+        let count = self.filtered_count();
+        if self.selected_index + 1 < count {
             self.selected_index += 1;
         }
         self.ensure_visible();
@@ -245,20 +301,30 @@ impl DiagnosticsPanel {
         }
     }
 
-    /// Get error count.
-    pub fn error_count(&self) -> usize {
-        self.all_diagnostics
-            .iter()
-            .filter(|e| e.severity == DiagnosticSeverity::ERROR)
-            .count()
+    /// Ensure counts cache is valid.
+    fn ensure_counts_cache(&mut self) {
+        if !self.counts_cache_valid {
+            self.cached_error_count = 0;
+            self.cached_warning_count = 0;
+            for entry in &self.all_diagnostics {
+                match entry.severity {
+                    DiagnosticSeverity::ERROR => self.cached_error_count += 1,
+                    DiagnosticSeverity::WARNING => self.cached_warning_count += 1,
+                    _ => {}
+                }
+            }
+            self.counts_cache_valid = true;
+        }
     }
 
-    /// Get warning count.
+    /// Get error count (reads cached value, call ensure_counts_cache first).
+    pub fn error_count(&self) -> usize {
+        self.cached_error_count
+    }
+
+    /// Get warning count (reads cached value, call ensure_counts_cache first).
     pub fn warning_count(&self) -> usize {
-        self.all_diagnostics
-            .iter()
-            .filter(|e| e.severity == DiagnosticSeverity::WARNING)
-            .count()
+        self.cached_warning_count
     }
 
     /// Get total count.
@@ -285,11 +351,15 @@ impl Panel for DiagnosticsPanel {
     fn prepare_render(&mut self, theme: &Theme, config: &termide_config::Config) {
         self.cached_theme = *theme;
         self.vim_mode = config.general.vim_mode;
+        // Ensure caches are populated (for title() which uses &self)
+        self.ensure_counts_cache();
+        self.ensure_filtered_cache();
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, _ctx: &RenderContext) {
         self.last_height = area.height as usize;
-        let theme = &self.cached_theme;
+        // Clone theme to avoid borrow conflicts with mutable cache methods
+        let theme = self.cached_theme;
 
         // Clear area
         let bg_style = Style::default().bg(theme.bg).fg(theme.fg);
@@ -301,12 +371,13 @@ impl Panel for DiagnosticsPanel {
         }
 
         // Render header with filter info
+        let filtered_len = self.filtered_count();
         if area.height > 1 {
             let header_y = area.top();
             let header_text = format!(
                 " Filter: {} | {} items",
                 self.filter.display(),
-                self.filtered_diagnostics().len()
+                filtered_len
             );
             let header_style = Style::default().bg(theme.accented_bg).fg(theme.fg);
 
@@ -327,9 +398,7 @@ impl Panel for DiagnosticsPanel {
         let content_top = area.top() + 1;
         let content_height = (area.height.saturating_sub(2)) as usize;
 
-        let filtered = self.filtered_diagnostics();
-
-        if filtered.is_empty() {
+        if filtered_len == 0 {
             // Show "No diagnostics" message
             let msg = "No diagnostics";
             let msg_y = content_top + content_height as u16 / 2;
@@ -344,15 +413,15 @@ impl Panel for DiagnosticsPanel {
                 }
             }
         } else {
-            // Render diagnostic entries
-            for (display_idx, (orig_idx, entry)) in filtered
-                .iter()
-                .skip(self.scroll_offset)
-                .take(content_height)
-                .enumerate()
-            {
+            // Render diagnostic entries using cached indices
+            let visible_indices =
+                self.get_visible_filtered_indices(self.scroll_offset, content_height);
+            let selected_index = self.selected_index;
+
+            for (display_idx, orig_idx) in visible_indices {
+                let entry = &self.all_diagnostics[orig_idx];
                 let y = content_top + display_idx as u16;
-                let is_selected = *orig_idx == self.selected_index;
+                let is_selected = orig_idx == selected_index;
 
                 // Determine style
                 let (line_style, icon_style) = if is_selected {
@@ -426,9 +495,9 @@ impl Panel for DiagnosticsPanel {
         }
 
         // Render scrollbar
-        if filtered.len() > content_height && area.width > 2 {
+        if filtered_len > content_height && area.width > 2 {
             let scrollbar_x = area.right() - 1;
-            let theme_colors = ThemeColors::from(theme);
+            let theme_colors = ThemeColors::from(&theme);
             ScrollBar::render(
                 buf,
                 scrollbar_x,
@@ -436,7 +505,7 @@ impl Panel for DiagnosticsPanel {
                 content_height as u16,
                 self.scroll_offset,
                 content_height,
-                filtered.len(),
+                filtered_len,
                 &theme_colors,
                 true, // is_focused
             );
@@ -459,8 +528,8 @@ impl Panel for DiagnosticsPanel {
             return vec![];
         }
         if is_go_end(&key, self.vim_mode) {
-            let filtered = self.filtered_diagnostics();
-            self.selected_index = filtered.len().saturating_sub(1);
+            let count = self.filtered_count();
+            self.selected_index = count.saturating_sub(1);
             self.ensure_visible();
             return vec![];
         }
@@ -489,6 +558,8 @@ impl Panel for DiagnosticsPanel {
                 self.filter = self.filter.next();
                 self.selected_index = 0;
                 self.scroll_offset = 0;
+                // Invalidate filter cache since filter changed
+                self.filter_cache_valid = false;
             }
             _ => {}
         }
@@ -508,9 +579,9 @@ impl Panel for DiagnosticsPanel {
             MouseEventKind::Down(MouseButton::Left) => {
                 if mouse.row >= content_top && mouse.row < area.bottom() {
                     let click_offset = (mouse.row - content_top) as usize;
-                    let filtered = self.filtered_diagnostics();
+                    let count = self.filtered_count();
                     let new_idx = self.scroll_offset + click_offset;
-                    if new_idx < filtered.len() {
+                    if new_idx < count {
                         self.selected_index = new_idx;
                     }
                 }
