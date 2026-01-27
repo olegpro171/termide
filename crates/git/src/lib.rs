@@ -83,6 +83,27 @@ pub fn find_repo_root(path: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Find the top-level repository root, skipping submodules.
+///
+/// Submodules have `.git` as a file (not directory) containing `gitdir: ...`.
+/// This function continues searching upward until it finds a repository
+/// with `.git` as a directory (the actual root repo).
+pub fn find_toplevel_repo(path: &Path) -> Option<PathBuf> {
+    let mut current = path;
+
+    loop {
+        let git_path = current.join(".git");
+        if git_path.exists() {
+            // If .git is a directory (not a file), this is the top-level repo
+            if git_path.is_dir() {
+                return Some(current.to_path_buf());
+            }
+            // Otherwise it's a submodule (.git is a file), continue searching up
+        }
+        current = current.parent()?;
+    }
+}
+
 /// Get git status for a specific file relative to repo root.
 pub fn file_status(repo_root: &Path, file_path: &Path) -> GitStatus {
     let relative = match file_path.strip_prefix(repo_root) {
@@ -563,8 +584,8 @@ pub fn find_repos_from_paths(paths: &[PathBuf], submodule_depth: usize) -> Vec<P
     let mut searched_roots = HashSet::new();
 
     for path in filtered_paths {
-        // Search UP to find repository root
-        if let Some(repo_root) = find_repo_root(&path) {
+        // Search UP to find TOP-LEVEL repository root (not submodule)
+        if let Some(repo_root) = find_toplevel_repo(&path) {
             // Skip if we already scanned this repo
             if searched_roots.contains(&repo_root) {
                 continue;
