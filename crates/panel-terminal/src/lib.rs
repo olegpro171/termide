@@ -1168,11 +1168,25 @@ impl Panel for Terminal {
             KeyCode::Char(c) => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     // Ctrl+C, Ctrl+D, etc.
-                    if c == 'c' {
-                        let _ = self.send_input(&[3]); // Ctrl+C
-                    } else if c == 'd' {
+                    if c.eq_ignore_ascii_case(&'c') {
+                        // Ctrl+C: copy if there's a selection, otherwise send SIGINT
+                        let has_selection = {
+                            let screen = self.screen.read().expect("Terminal screen lock poisoned");
+                            screen.selection_start.is_some() && screen.selection_end.is_some()
+                        };
+                        if has_selection {
+                            let _ = self.copy_selection_to_clipboard();
+                            // Clear selection after copying
+                            self.screen
+                                .write()
+                                .expect("Terminal screen lock poisoned")
+                                .clear_selection();
+                        } else {
+                            let _ = self.send_input(&[3]); // Ctrl+C (SIGINT)
+                        }
+                    } else if c.eq_ignore_ascii_case(&'d') {
                         let _ = self.send_input(&[4]); // Ctrl+D
-                    } else if c == 'z' {
+                    } else if c.eq_ignore_ascii_case(&'z') {
                         let _ = self.send_input(&[26]); // Ctrl+Z
                     } else {
                         // Other Ctrl combinations
