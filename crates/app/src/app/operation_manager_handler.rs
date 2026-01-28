@@ -185,6 +185,25 @@ impl App {
                                     self.process_batch_operation(operation);
                                 }
                             }
+
+                            // Skip file manager refresh for editor uploads (file already existed)
+                            if self.state.skip_refresh_after_upload {
+                                self.state.skip_refresh_after_upload = false;
+                                should_refresh_file_managers = false;
+                            }
+
+                            // Handle close editor after upload (for "save and close" flow)
+                            if self.state.close_editor_after_upload {
+                                self.state.close_editor_after_upload = false;
+                                // Clear uploading flag on editor
+                                if let Some(panel) = self.layout_manager.active_panel_mut() {
+                                    if let Some(editor) = panel.as_editor_mut() {
+                                        editor.set_uploading(false);
+                                    }
+                                }
+                                // Close the editor panel
+                                self.close_panel_at_index(0);
+                            }
                         }
                         OperationResult::PartialSuccess {
                             completed,
@@ -233,6 +252,18 @@ impl App {
                             // Clear pending remote delete (don't delete source if download failed)
                             self.state.pending_remote_delete = None;
 
+                            // Clear editor upload flags on failure
+                            self.state.skip_refresh_after_upload = false;
+                            if self.state.close_editor_after_upload {
+                                self.state.close_editor_after_upload = false;
+                                // Clear uploading flag on editor
+                                if let Some(panel) = self.layout_manager.active_panel_mut() {
+                                    if let Some(editor) = panel.as_editor_mut() {
+                                        editor.set_uploading(false);
+                                    }
+                                }
+                            }
+
                             // Clear pending batch upload (don't continue if upload failed)
                             if self.state.pending_batch_upload.take().is_some() {
                                 self.state.close_modal();
@@ -257,6 +288,18 @@ impl App {
 
                             // Clear pending remote delete (don't delete source if download cancelled)
                             self.state.pending_remote_delete = None;
+
+                            // Clear editor upload flags on cancel
+                            self.state.skip_refresh_after_upload = false;
+                            if self.state.close_editor_after_upload {
+                                self.state.close_editor_after_upload = false;
+                                // Clear uploading flag on editor
+                                if let Some(panel) = self.layout_manager.active_panel_mut() {
+                                    if let Some(editor) = panel.as_editor_mut() {
+                                        editor.set_uploading(false);
+                                    }
+                                }
+                            }
 
                             // Clear pending batch upload (don't continue if upload cancelled)
                             if self.state.pending_batch_upload.take().is_some() {

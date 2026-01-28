@@ -503,6 +503,10 @@ pub struct AppState {
     pub pending_batch_upload: Option<PendingBatchUpload>,
     /// Pending remote delete for move operations (delete source after download)
     pub pending_remote_delete: Option<PendingRemoteDelete>,
+    /// Close editor after current upload completes (for "save and close" flow)
+    pub close_editor_after_upload: bool,
+    /// Skip file manager refresh after upload (for editor saves - file already exists)
+    pub skip_refresh_after_upload: bool,
     /// Unified watcher for filesystem and git changes
     pub watcher: Option<UnifiedWatcher>,
     /// Current theme
@@ -597,6 +601,8 @@ impl AppState {
             batch_upload_operation: None,
             pending_batch_upload: None,
             pending_remote_delete: None,
+            close_editor_after_upload: false,
+            skip_refresh_after_upload: false,
             watcher: None,
             theme,
             config,

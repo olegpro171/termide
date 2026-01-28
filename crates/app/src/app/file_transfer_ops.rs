@@ -133,6 +133,8 @@ impl App {
         match self.state.start_operation_now(request, vfs_manager) {
             Ok(_operation_id) => {
                 log::info!("Started editor upload operation");
+                // Skip file manager refresh - file already exists, we're just overwriting
+                self.state.skip_refresh_after_upload = true;
             }
             Err(e) => {
                 log::error!("Failed to start upload operation: {}", e);

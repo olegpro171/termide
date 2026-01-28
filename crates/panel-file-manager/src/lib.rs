@@ -822,11 +822,13 @@ impl FileManager {
         }
 
         // Read directory contents
-        // For remote paths, skip local file reading - entries come from VFS via update_entries_from_vfs()
+        // For remote paths, start async listing - entries come from VFS via update_entries_from_vfs()
         if self.vfs.is_remote() {
-            log::debug!("load_directory_inner: Skipping local read for remote path");
-            // For remote paths, entries will be populated by update_entries_from_vfs()
-            // when the VFS connection completes and directory listing is received
+            log::debug!("load_directory_inner: Starting async list for remote path");
+            // Invalidate cache and start async directory listing
+            // Entries will be populated by update_entries_from_vfs() when VFS operation completes
+            self.vfs.invalidate_cache();
+            self.vfs.start_list_dir();
         } else if let Ok(read_dir) = fs::read_dir(&self.current_path) {
             for entry in read_dir.flatten() {
                 if let Ok(metadata) = entry.metadata() {
