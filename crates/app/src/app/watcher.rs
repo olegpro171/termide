@@ -102,32 +102,46 @@ impl App {
             let _ = watcher.watch_repository(repo_root);
         }
 
-        // Process git events
+        // Process git events — expanded panels get the update, collapsed panels get marked stale
         if !git_repos.is_empty() {
             let repo_paths: Vec<&std::path::Path> = git_repos.iter().map(|p| p.as_path()).collect();
 
-            for panel in self.layout_manager.iter_all_panels_mut() {
-                if panel
-                    .handle_command(PanelCommand::OnGitUpdate {
-                        repo_paths: &repo_paths,
-                    })
-                    .needs_redraw()
-                {
-                    self.state.needs_redraw = true;
+            for (panel, is_expanded) in self
+                .layout_manager
+                .iter_all_panels_with_expanded_state_mut()
+            {
+                if is_expanded {
+                    if panel
+                        .handle_command(PanelCommand::OnGitUpdate {
+                            repo_paths: &repo_paths,
+                        })
+                        .needs_redraw()
+                    {
+                        self.state.needs_redraw = true;
+                    }
+                } else {
+                    panel.handle_command(PanelCommand::MarkStale);
                 }
             }
         }
 
-        // Process filesystem events
-        for panel in self.layout_manager.iter_all_panels_mut() {
-            for path in &fs_paths {
-                if panel
-                    .handle_command(PanelCommand::OnFsUpdate { changed_path: path })
-                    .needs_redraw()
-                {
-                    self.state.needs_redraw = true;
-                    break;
+        // Process filesystem events — expanded panels get the update, collapsed panels get marked stale
+        for (panel, is_expanded) in self
+            .layout_manager
+            .iter_all_panels_with_expanded_state_mut()
+        {
+            if is_expanded {
+                for path in &fs_paths {
+                    if panel
+                        .handle_command(PanelCommand::OnFsUpdate { changed_path: path })
+                        .needs_redraw()
+                    {
+                        self.state.needs_redraw = true;
+                        break;
+                    }
                 }
+            } else if !fs_paths.is_empty() {
+                panel.handle_command(PanelCommand::MarkStale);
             }
         }
     }

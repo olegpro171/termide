@@ -1,6 +1,6 @@
 //! Panel group implementation for accordion-style layout.
 
-use termide_core::Panel;
+use termide_core::{Panel, PanelCommand};
 
 /// Group of panels in accordion (vertical stack).
 pub struct PanelGroup {
@@ -44,9 +44,12 @@ impl PanelGroup {
     }
 
     /// Set expanded panel by index.
+    /// Sends `RefreshIfStale` to the newly expanded panel so it can catch up
+    /// on missed updates from when it was collapsed.
     pub fn set_expanded(&mut self, index: usize) {
         if index < self.panels.len() {
             self.expanded_index = index;
+            self.panels[index].handle_command(PanelCommand::RefreshIfStale);
         }
     }
 

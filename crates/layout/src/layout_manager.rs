@@ -442,6 +442,27 @@ impl LayoutManager {
             .flat_map(|g| g.panels_mut().iter_mut())
     }
 
+    /// Iterator over all panels with their expanded state (mutable).
+    /// Returns `(panel, is_expanded)` for each panel.
+    pub fn iter_all_panels_with_expanded_state_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&mut Box<dyn Panel>, bool)> {
+        self.panel_groups.iter_mut().flat_map(|g| {
+            let expanded = g.expanded_index();
+            g.panels_mut()
+                .iter_mut()
+                .enumerate()
+                .map(move |(idx, panel)| (panel, idx == expanded))
+        })
+    }
+
+    /// Iterator over only expanded (visible) panels (mutable).
+    pub fn iter_expanded_panels_mut(&mut self) -> impl Iterator<Item = &mut Box<dyn Panel>> {
+        self.panel_groups
+            .iter_mut()
+            .filter_map(|g| g.expanded_panel_mut())
+    }
+
     /// Close active panel.
     pub fn close_active_panel(&mut self, available_width: u16) -> Result<()> {
         let active_group_idx = self.focus;

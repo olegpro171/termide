@@ -48,23 +48,23 @@ impl App {
         }
     }
 
-    /// Check async git status results for FileManager panels
+    /// Check async git status results for all FileManager panels.
+    /// Uses try_recv (O(1)) so it's safe to run for collapsed panels too —
+    /// otherwise the receiver never drains and the spinner hangs forever.
     pub(super) fn check_fm_git_status_async(&mut self) {
-        for group in &mut self.layout_manager.panel_groups {
-            for panel in group.panels_mut() {
-                if let Some(fm) = panel.as_file_manager_mut() {
-                    // Check for async git status results
-                    if fm.check_git_status_async() {
-                        self.state.needs_redraw = true;
-                    }
+        for panel in self.layout_manager.iter_all_panels_mut() {
+            if let Some(fm) = panel.as_file_manager_mut() {
+                if fm.check_git_status_async() {
+                    self.state.needs_redraw = true;
                 }
             }
         }
     }
 
-    /// Check and apply pending git diff updates (debounced) and async git diff results
+    /// Check and apply pending git diff updates (debounced) and async git diff results.
+    /// Runs for all panels because CheckGitDiffReceiver is a cheap try_recv
+    /// that must be drained to avoid stale receivers in collapsed panels.
     pub(super) fn check_pending_git_diff_updates(&mut self) {
-        // Check all panels for pending git diff updates and async results using handle_command
         for panel in self.layout_manager.iter_all_panels_mut() {
             // Check debounced buffer updates
             panel.handle_command(PanelCommand::CheckPendingGitDiff);
@@ -237,12 +237,12 @@ impl App {
         }
     }
 
-    /// Poll LSP status for all editors and completion for active editor
+    /// Poll LSP status for expanded editors and completion for active editor
     pub(super) fn poll_lsp_completion(&mut self) {
-        // First, update LSP loading status for ALL editors (not just active)
-        // This ensures spinners disappear and animate correctly for all panels
+        // Update LSP loading status for expanded editors only
+        // Collapsed editors will catch up when they are expanded again
         let mut any_loading = false;
-        for panel in self.layout_manager.iter_all_panels_mut() {
+        for panel in self.layout_manager.iter_expanded_panels_mut() {
             if let Some(editor) = panel.as_editor_mut() {
                 // Check if server loading status changed
                 if let Some(ref lsp_manager) = self.state.lsp_manager {

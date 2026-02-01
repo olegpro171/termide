@@ -97,6 +97,10 @@ pub struct Editor {
     // === Vim mode state ===
     /// Vim mode state (None if Vim mode is disabled)
     pub(crate) vim: Option<VimState>,
+
+    // === Stale-on-collapse optimization ===
+    /// Whether panel is stale (collapsed, skipping background work)
+    is_stale: bool,
 }
 
 impl Editor {
@@ -137,6 +141,7 @@ impl Editor {
             status_message: None,
             scroll_follows_cursor: true,
             vim,
+            is_stale: false,
         }
     }
 
@@ -582,6 +587,7 @@ impl Editor {
             status_message: None,
             scroll_follows_cursor: true,
             vim,
+            is_stale: false,
         })
     }
 
@@ -616,6 +622,7 @@ impl Editor {
             status_message: None,
             scroll_follows_cursor: true,
             vim: None, // view_only mode doesn't have vim
+            is_stale: false,
         }
     }
 
@@ -2183,6 +2190,11 @@ impl Panel for Editor {
     }
 
     fn tick(&mut self) -> Vec<PanelEvent> {
+        // Skip background work when panel is collapsed (stale)
+        if self.is_stale {
+            return vec![];
+        }
+
         // Handle auto-scroll during selection drag
         if self.tick_auto_scroll() {
             return vec![PanelEvent::NeedsRedraw];
@@ -2290,6 +2302,20 @@ impl Panel for Editor {
                 self.file_state.external_change_detected = false;
                 // Note: buffer.modified stays true but caller handles closing directly
                 CommandResult::None
+            }
+            PanelCommand::MarkStale => {
+                self.is_stale = true;
+                CommandResult::None
+            }
+            PanelCommand::RefreshIfStale => {
+                if self.is_stale {
+                    self.is_stale = false;
+                    self.check_external_modification();
+                    self.update_git_diff();
+                    CommandResult::NeedsRedraw(true)
+                } else {
+                    CommandResult::None
+                }
             }
             // Commands not applicable to Editor
             PanelCommand::SetFsWatchRoot { .. }

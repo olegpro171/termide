@@ -356,6 +356,8 @@ pub struct FileManager {
     cached_vfs_timeout_secs: u64,
     /// VFS state for network filesystem support
     vfs: VfsState,
+    /// Whether panel is stale (collapsed, skipping background work)
+    is_stale: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -423,6 +425,7 @@ impl FileManager {
             vim_mode: false,
             cached_vfs_timeout_secs: 60, // Default, will be updated from config
             vfs,
+            is_stale: false,
         };
         let _ = fm.load_directory();
         fm
@@ -455,6 +458,7 @@ impl FileManager {
             vim_mode: false,
             cached_vfs_timeout_secs: 60,
             vfs,
+            is_stale: false,
         };
 
         // Start the directory listing operation for remote paths
@@ -1478,6 +1482,26 @@ impl Panel for FileManager {
                 }
                 CommandResult::None
             }
+            PanelCommand::MarkStale => {
+                // Remote panels don't depend on local fs/git events — never mark stale
+                if !self.vfs.is_remote() {
+                    self.is_stale = true;
+                }
+                CommandResult::None
+            }
+            PanelCommand::RefreshIfStale => {
+                if self.is_stale {
+                    self.is_stale = false;
+                    let _ = self.reload_directory();
+                    // Only refresh git status for local panels
+                    if !self.vfs.is_remote() {
+                        self.refresh_git_status();
+                    }
+                    CommandResult::NeedsRedraw(true)
+                } else {
+                    CommandResult::None
+                }
+            }
             // Commands not applicable to FileManager
             PanelCommand::CheckPendingGitDiff
             | PanelCommand::CheckGitDiffReceiver
@@ -1503,29 +1527,33 @@ impl Panel for FileManager {
     }
 
     fn tick(&mut self) -> Vec<PanelEvent> {
+        // --- Always drain async results (even when stale/collapsed) ---
+        // VFS and git status receivers must be consumed to prevent stuck spinners.
+        // IMPORTANT: never early-return before vfs.tick() — results must always be drained.
+
         let mut events = Vec::new();
 
-        // Check for timeout and update status bar during connection
+        // Check for VFS connection timeout (cancel stuck connections)
         if let Some((status, Some(secs))) = self.vfs.connection_status_with_elapsed() {
-            // Update status bar with connection progress
-            events.push(PanelEvent::ShowMessage(format!("{} {}s", status, secs)));
-
-            // Check for timeout
             if secs >= self.cached_vfs_timeout_secs {
                 log::warn!("VFS connection timeout after {}s", secs);
                 if self.vfs.cancel_pending().is_some() {
-                    // Sync FileManager path with VfsState
                     self.current_path = self.vfs.path_buf();
                     let _ = self.load_directory();
-                    let t = termide_i18n::t();
-                    self.show_info_modal(
-                        t.connection_timeout_title(),
-                        t.connection_timeout_message(),
-                    );
-                    events.push(PanelEvent::ClearStatus);
-                    events.push(PanelEvent::NeedsRedraw);
-                    return events;
+                    if !self.is_stale {
+                        let t = termide_i18n::t();
+                        self.show_info_modal(
+                            t.connection_timeout_title(),
+                            t.connection_timeout_message(),
+                        );
+                        events.push(PanelEvent::ClearStatus);
+                        events.push(PanelEvent::NeedsRedraw);
+                        return events;
+                    }
                 }
+            } else if !self.is_stale {
+                // Show connection progress in status bar (no early return — must reach vfs.tick)
+                events.push(PanelEvent::ShowMessage(format!("{} {}s", status, secs)));
             }
         }
 
@@ -1533,29 +1561,33 @@ impl Panel for FileManager {
         if let Some(result) = self.vfs.tick() {
             match result {
                 Ok(entries) => {
-                    // Directory listing completed - sync path and update entries
                     self.current_path = self.vfs.path_buf();
                     self.update_entries_from_vfs(entries);
-                    events.push(PanelEvent::ClearStatus);
-                    events.push(PanelEvent::NeedsRedraw);
-                    return events;
                 }
                 Err(e) => {
                     log::error!("VFS operation failed: {}", e);
-                    // VfsState already restored to previous path, sync FileManager
                     self.current_path = self.vfs.path_buf();
                     let _ = self.load_directory();
-                    let t = termide_i18n::t();
-                    self.show_info_modal(t.connection_error_title(), &format!("{}", e));
-                    events.push(PanelEvent::ClearStatus);
-                    events.push(PanelEvent::NeedsRedraw);
-                    return events;
+                    if !self.is_stale {
+                        let t = termide_i18n::t();
+                        self.show_info_modal(t.connection_error_title(), &format!("{}", e));
+                    }
                 }
+            }
+            if !self.is_stale {
+                events.push(PanelEvent::ClearStatus);
+                events.push(PanelEvent::NeedsRedraw);
+                return events;
             }
         }
 
-        // Also check for pending git status (existing functionality)
+        // Drain git status receiver
         self.check_git_status_async();
+
+        // Skip remaining work when collapsed (stale)
+        if self.is_stale {
+            return vec![];
+        }
 
         events
     }

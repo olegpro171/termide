@@ -285,25 +285,32 @@ impl App {
                     if !is_scrolling {
                         // Single combined loop: terminal output + panel tick + FM spinner
                         let mut all_panel_events = Vec::new();
-                        for panel in self.layout_manager.iter_all_panels_mut() {
+                        for (panel, is_expanded) in self
+                            .layout_manager
+                            .iter_all_panels_with_expanded_state_mut()
+                        {
                             // Terminal output check (always needed, even during idle)
+                            // PTY must be drained to avoid buffer deadlock
                             if let Some(terminal) = panel.as_terminal_mut() {
                                 if terminal.has_pending_output() {
                                     self.state.needs_redraw = true;
                                 }
                             }
 
-                            // Call tick() on all panels
+                            // Always call tick() — stale panels drain async
+                            // results internally and return early
                             let events = panel.tick();
                             if !events.is_empty() {
                                 self.state.needs_redraw = true;
                                 all_panel_events.extend(events);
                             }
 
-                            // FileManager-specific: check for pending operations for spinner animation
-                            if let Some(fm) = panel.as_file_manager_mut() {
-                                if fm.vfs_state().has_pending_operation() {
-                                    self.state.needs_redraw = true;
+                            // FileManager-specific: only check VFS for expanded panels
+                            if is_expanded {
+                                if let Some(fm) = panel.as_file_manager_mut() {
+                                    if fm.vfs_state().has_pending_operation() {
+                                        self.state.needs_redraw = true;
+                                    }
                                 }
                             }
                         }

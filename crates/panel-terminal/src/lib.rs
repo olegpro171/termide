@@ -1640,6 +1640,8 @@ impl Panel for Terminal {
                     CommandResult::NeedsRedraw(false)
                 }
             }
+            // Terminals always stay active (PTY must be drained), so MarkStale/RefreshIfStale are no-ops
+            PanelCommand::MarkStale | PanelCommand::RefreshIfStale => CommandResult::None,
             // Commands not applicable to Terminal
             PanelCommand::GetRepoRoot
             | PanelCommand::OnGitUpdate { .. }

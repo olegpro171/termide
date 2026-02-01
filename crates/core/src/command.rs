@@ -99,6 +99,15 @@ pub enum PanelCommand<'a> {
         /// Spinner animation frame
         spinner_frame: usize,
     },
+
+    // === Stale-on-collapse optimization ===
+    /// Mark panel as stale (collapsed, skip background work).
+    /// Response: `CommandResult::None`
+    MarkStale,
+
+    /// Refresh panel if stale (just expanded, catch up on missed updates).
+    /// Response: `CommandResult::NeedsRedraw(bool)`
+    RefreshIfStale,
 }
 
 /// Result of handling a panel command.
