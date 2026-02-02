@@ -195,17 +195,11 @@ impl VfsPath {
     }
 
     /// Get a log-safe connection identifier (username redacted).
+    ///
+    /// Delegates to a free function taking only non-sensitive fields
+    /// to avoid CodeQL taint propagation through `&self.username`.
     pub fn log_safe_key(&self) -> String {
-        if self.is_local() {
-            "local".to_string()
-        } else {
-            format!(
-                "{}://***@{}:{}",
-                self.protocol.scheme(),
-                self.host.as_deref().unwrap_or(""),
-                self.effective_port().unwrap_or(0)
-            )
-        }
+        log_safe_connection_key(self.protocol, self.host.as_deref(), self.effective_port())
     }
 
     /// Get the default port for this protocol.
@@ -222,6 +216,23 @@ impl VfsPath {
     /// Get the effective port (explicit or default).
     pub fn effective_port(&self) -> Option<u16> {
         self.port.or_else(|| self.default_port())
+    }
+}
+
+/// Build a log-safe connection identifier from non-sensitive fields only.
+///
+/// This free function breaks CodeQL's taint chain: `VfsPath.username` never
+/// enters scope here, so log output is not flagged as cleartext credential logging.
+fn log_safe_connection_key(protocol: VfsProtocol, host: Option<&str>, port: Option<u16>) -> String {
+    if protocol == VfsProtocol::Local {
+        "local".to_string()
+    } else {
+        format!(
+            "{}://***@{}:{}",
+            protocol.scheme(),
+            host.unwrap_or(""),
+            port.unwrap_or(0)
+        )
     }
 }
 
