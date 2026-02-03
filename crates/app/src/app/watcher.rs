@@ -119,8 +119,8 @@ impl App {
                     {
                         self.state.needs_redraw = true;
                     }
-                } else {
-                    panel.handle_command(PanelCommand::MarkStale);
+                } else if panel.handle_command(PanelCommand::MarkStale).needs_redraw() {
+                    self.state.needs_redraw = true;
                 }
             }
         }
@@ -140,8 +140,10 @@ impl App {
                         break;
                     }
                 }
-            } else if !fs_paths.is_empty() {
-                panel.handle_command(PanelCommand::MarkStale);
+            } else if !fs_paths.is_empty()
+                && panel.handle_command(PanelCommand::MarkStale).needs_redraw()
+            {
+                self.state.needs_redraw = true;
             }
         }
     }

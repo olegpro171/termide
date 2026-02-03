@@ -248,6 +248,22 @@ impl GitStatusPanel {
         self.is_loading = false;
     }
 
+    /// Lightweight refresh of only the data used by `title()`.
+    /// Skips branch listing, sorting, and cursor adjustment.
+    fn refresh_title_data(&mut self) {
+        let repo = match self.repo_manager.current() {
+            Some(r) => r.to_path_buf(),
+            None => return,
+        };
+
+        self.branch = git::get_current_branch(&repo);
+        let (ahead, behind) = git::get_ahead_behind(&repo);
+        self.ahead = ahead;
+        self.behind = behind;
+        self.unstaged_files = git::get_unstaged_files(&repo);
+        self.staged_files = git::get_staged_files(&repo);
+    }
+
     /// Move to next section
     fn next_section(&mut self) {
         self.current_section = match self.current_section {
@@ -699,7 +715,8 @@ impl Panel for GitStatusPanel {
             }
             PanelCommand::MarkStale => {
                 self.is_stale = true;
-                CommandResult::None
+                self.refresh_title_data();
+                CommandResult::NeedsRedraw(true)
             }
             PanelCommand::RefreshIfStale => {
                 if self.is_stale {
