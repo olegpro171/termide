@@ -832,9 +832,14 @@ impl App {
         // Send OnGitUpdate command to all panels
         let repo_paths: Vec<&std::path::Path> = vec![repo_path];
         for panel in self.layout_manager.iter_all_panels_mut() {
-            let _ = panel.handle_command(PanelCommand::OnGitUpdate {
-                repo_paths: &repo_paths,
-            });
+            if panel
+                .handle_command(PanelCommand::OnGitUpdate {
+                    repo_paths: &repo_paths,
+                })
+                .needs_redraw()
+            {
+                self.state.needs_redraw = true;
+            }
         }
     }
 

@@ -593,9 +593,14 @@ impl FileManager {
 
     /// Load the contents of the current directory
     pub fn load_directory(&mut self) -> Result<()> {
-        // Invalidate git_root when navigating to a new directory
-        // This triggers re-registration with watcher in check_watcher_events()
-        self.git_root = None;
+        // Preserve git_root when navigating within the same repo —
+        // clearing it breaks OnGitUpdate/OnFsUpdate handlers.
+        // Only clear when leaving the repo (navigate_to() handles re-registration).
+        if let Some(ref root) = self.git_root {
+            if !self.current_path.starts_with(root) {
+                self.git_root = None;
+            }
+        }
 
         // Update debounce timestamp to prevent rapid subsequent reloads from being skipped
         self.navigation.last_reload_time = Some(std::time::Instant::now());
@@ -605,7 +610,12 @@ impl FileManager {
 
     /// Force directory reload, bypassing debounce
     pub fn force_reload_directory(&mut self) -> Result<()> {
-        self.git_root = None;
+        // Preserve git_root within the same repo (same as load_directory)
+        if let Some(ref root) = self.git_root {
+            if !self.current_path.starts_with(root) {
+                self.git_root = None;
+            }
+        }
         // Clear last_reload_time to bypass debounce
         self.navigation.last_reload_time = None;
 
@@ -1477,7 +1487,7 @@ impl Panel for FileManager {
                         }
                         // Otherwise just refresh git status colors
                         self.refresh_git_status();
-                        return CommandResult::NeedsRedraw(false);
+                        return CommandResult::NeedsRedraw(true);
                     }
                 }
                 CommandResult::None
@@ -1486,6 +1496,7 @@ impl Panel for FileManager {
                 // Remote panels don't depend on local fs/git events — never mark stale
                 if !self.vfs.is_remote() {
                     self.is_stale = true;
+                    return CommandResult::NeedsRedraw(true);
                 }
                 CommandResult::None
             }
