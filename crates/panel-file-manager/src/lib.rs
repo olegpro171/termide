@@ -1581,8 +1581,10 @@ impl Panel for FileManager {
             }
         }
 
-        // Drain git status receiver
-        self.check_git_status_async();
+        // Drain git status receiver — redraw if statuses changed
+        if self.check_git_status_async() && !self.is_stale {
+            events.push(PanelEvent::NeedsRedraw);
+        }
 
         // Skip remaining work when collapsed (stale)
         if self.is_stale {
