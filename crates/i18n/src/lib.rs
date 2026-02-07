@@ -460,6 +460,17 @@ pub trait Translation: Send + Sync {
     fn git_diff_title_commit_fmt(&self, repo: &str, hash: &str, count: usize) -> String;
     fn git_diff_title_fmt(&self, repo: &str, count: usize) -> String;
 
+    // Git commit info modal
+    fn git_commit_info_title(&self, hash: &str) -> String;
+    fn git_commit_author(&self) -> &str;
+    fn git_commit_date(&self) -> &str;
+    fn git_commit_message(&self) -> &str;
+    fn git_commit_files(&self) -> &str;
+    fn git_commit_files_modified(&self) -> &str;
+    fn git_commit_files_added(&self) -> &str;
+    fn git_commit_files_deleted(&self) -> &str;
+    fn git_commit_lines(&self) -> &str;
+
     // Outline panel strings
     fn outline_title(&self) -> &str;
     fn outline_no_symbols(&self) -> &str;

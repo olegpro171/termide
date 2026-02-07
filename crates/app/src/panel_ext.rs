@@ -35,6 +35,7 @@ use termide_modal::ActiveModal;
 use termide_panel_diagnostics::DiagnosticsPanel;
 use termide_panel_editor::Editor;
 use termide_panel_file_manager::FileManager;
+use termide_panel_git_log::GitLogPanel;
 use termide_panel_git_status::GitStatusPanel;
 use termide_panel_misc::JournalPanel;
 use termide_panel_outline::OutlinePanel;
@@ -68,6 +69,8 @@ pub trait PanelExt {
     fn as_diagnostics_panel_mut(&mut self) -> Option<&mut DiagnosticsPanel>;
     /// Downcast to OutlinePanel (mutable)
     fn as_outline_panel_mut(&mut self) -> Option<&mut OutlinePanel>;
+    /// Downcast to GitLogPanel (mutable)
+    fn as_git_log_mut(&mut self) -> Option<&mut GitLogPanel>;
     /// Check if panel is a Journal panel
     fn is_journal(&self) -> bool;
     /// Take modal request from FileManager, Editor, or GitStatusPanel.
@@ -114,6 +117,10 @@ impl PanelExt for dyn Panel {
         (self as &mut dyn Any).downcast_mut::<OutlinePanel>()
     }
 
+    fn as_git_log_mut(&mut self) -> Option<&mut GitLogPanel> {
+        (self as &mut dyn Any).downcast_mut::<GitLogPanel>()
+    }
+
     fn is_journal(&self) -> bool {
         (self as &dyn Any).is::<JournalPanel>()
     }
@@ -127,6 +134,9 @@ impl PanelExt for dyn Panel {
         }
         if let Some(git_status) = self.as_git_status_mut() {
             return git_status.take_modal_request();
+        }
+        if let Some(git_log) = self.as_git_log_mut() {
+            return git_log.take_modal_request();
         }
         if let Some(journal) = (self as &mut dyn Any).downcast_mut::<JournalPanel>() {
             return journal.editor_mut().take_modal_request();
@@ -176,6 +186,10 @@ impl PanelExt for Box<dyn Panel> {
 
     fn as_outline_panel_mut(&mut self) -> Option<&mut OutlinePanel> {
         (**self).as_outline_panel_mut()
+    }
+
+    fn as_git_log_mut(&mut self) -> Option<&mut GitLogPanel> {
+        (**self).as_git_log_mut()
     }
 
     fn is_journal(&self) -> bool {

@@ -22,18 +22,47 @@ use termide_theme::Theme;
 
 use crate::{centered_rect_with_size, Modal, ModalResult};
 
+/// Style for a colored segment in modal values.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum SegmentStyle {
+    #[default]
+    Default,
+    Success,
+    Error,
+    Warning,
+    Disabled,
+}
+
+/// A text segment with an associated style.
+#[derive(Debug, Clone)]
+pub struct StyledSegment {
+    pub text: String,
+    pub style: SegmentStyle,
+}
+
+/// A modal value that is either plain text or a sequence of styled segments.
+#[derive(Debug, Clone)]
+pub enum ModalValue {
+    Text(String),
+    Segments(Vec<StyledSegment>),
+}
+
 /// Information modal window (closes on any key)
 #[derive(Debug)]
 pub struct InfoModal {
     title: String,
-    lines: Vec<(String, String)>,   // (key, value) pairs for table
-    spinner_frame: usize,           // Frame counter for spinner animation
-    last_button_area: Option<Rect>, // For mouse handling
+    lines: Vec<(String, ModalValue)>, // (key, value) pairs for table
+    spinner_frame: usize,             // Frame counter for spinner animation
+    last_button_area: Option<Rect>,   // For mouse handling
 }
 
 impl InfoModal {
-    /// Create a new information modal window with tabular data
+    /// Create a new information modal window with tabular data (plain text values).
     pub fn new(title: impl Into<String>, lines: Vec<(String, String)>) -> Self {
+        let lines = lines
+            .into_iter()
+            .map(|(k, v)| (k, ModalValue::Text(v)))
+            .collect();
         Self {
             title: title.into(),
             lines,
@@ -42,10 +71,20 @@ impl InfoModal {
         }
     }
 
-    /// Update a specific field value by key
+    /// Create a new information modal window with rich (styled) values.
+    pub fn new_rich(title: impl Into<String>, lines: Vec<(String, ModalValue)>) -> Self {
+        Self {
+            title: title.into(),
+            lines,
+            spinner_frame: 0,
+            last_button_area: None,
+        }
+    }
+
+    /// Update a specific field value by key (sets it to plain text).
     pub fn update_value(&mut self, key: &str, new_value: String) {
         if let Some(line) = self.lines.iter_mut().find(|(k, _)| k == key) {
-            line.1 = new_value;
+            line.1 = ModalValue::Text(new_value);
         }
     }
 
@@ -59,8 +98,8 @@ impl InfoModal {
         SPINNER_FRAMES[self.spinner_frame]
     }
 
-    /// Wrap text to fit within max_width, breaking on delimiters
-    fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    /// Wrap a single paragraph (no embedded newlines) to fit within max_width.
+    fn wrap_paragraph(text: &str, max_width: usize) -> Vec<String> {
         if max_width == 0 {
             return vec![text.to_string()];
         }
@@ -132,8 +171,24 @@ impl InfoModal {
         lines
     }
 
-    /// Calculate dynamic modal width based on content size
-    /// Fits content without wrapping, but respects screen size limits
+    /// Wrap text to fit within max_width, respecting embedded newlines.
+    fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+        let mut all_lines = Vec::new();
+        for paragraph in text.split('\n') {
+            if paragraph.is_empty() {
+                all_lines.push(String::new());
+            } else {
+                all_lines.extend(Self::wrap_paragraph(paragraph, max_width));
+            }
+        }
+        if all_lines.is_empty() {
+            all_lines.push(String::new());
+        }
+        all_lines
+    }
+
+    /// Calculate dynamic modal width based on content size.
+    /// Fits content without wrapping, but respects screen size limits.
     fn calculate_modal_width(&self, screen_width: u16) -> u16 {
         // Find maximum key length
         let max_key_len = self
@@ -148,12 +203,21 @@ impl InfoModal {
             .lines
             .iter()
             .map(|(_, value)| {
-                // Account for spinner characters if value contains "calculating"
-                let t = i18n::t();
-                if value.contains(t.file_info_calculating()) {
-                    value.width() + 2 // spinner char + space
-                } else {
-                    value.width()
+                match value {
+                    ModalValue::Text(text) => {
+                        // Account for spinner characters if value contains "calculating"
+                        let t = i18n::t();
+                        let extra = if text.contains(t.file_info_calculating()) {
+                            2 // spinner char + space
+                        } else {
+                            0
+                        };
+                        // Max width of any single line (split by \n)
+                        text.split('\n').map(|line| line.width()).max().unwrap_or(0) + extra
+                    }
+                    ModalValue::Segments(segments) => {
+                        segments.iter().map(|s| s.text.width()).sum::<usize>()
+                    }
                 }
             })
             .max()
@@ -197,16 +261,31 @@ impl Modal for InfoModal {
 
         // Calculate total lines needed (with wrapping)
         let t = i18n::t();
-        let mut total_data_lines = 0;
+        let mut total_data_lines: usize = 0;
         for (_, value) in &self.lines {
-            let display_value = if value.contains(t.file_info_calculating()) {
-                format!("{} {}", self.get_spinner_char(), value)
-            } else {
-                value.clone()
-            };
-            let wrapped = Self::wrap_text(&display_value, available_value_width);
-            total_data_lines += wrapped.len();
+            match value {
+                ModalValue::Text(text) => {
+                    let display_value = if text.contains(t.file_info_calculating()) {
+                        format!("{} {}", self.get_spinner_char(), text)
+                    } else {
+                        text.clone()
+                    };
+                    let wrapped = Self::wrap_text(&display_value, available_value_width);
+                    total_data_lines += wrapped.len();
+                }
+                ModalValue::Segments(_) => {
+                    total_data_lines += 1; // Segments are always one line
+                }
+            }
         }
+
+        // Truncate if content exceeds available screen height
+        let max_data_lines = area.height.saturating_sub(7) as usize; // reserve for borders, spacing, button
+        let (total_data_lines, truncated) = if total_data_lines > max_data_lines {
+            (max_data_lines, true)
+        } else {
+            (total_data_lines, false)
+        };
 
         // Calculate required height based on wrapped content:
         // 1 (top border) + 1 (empty line) + N (wrapped data lines) +
@@ -229,59 +308,96 @@ impl Modal for InfoModal {
             ])
             .split(inner);
 
+        // How many data lines we can actually render (leave 1 for truncation indicator)
+        let renderable_lines = if truncated {
+            total_data_lines.saturating_sub(1)
+        } else {
+            total_data_lines
+        };
+
+        let key_style = Style::default()
+            .fg(theme.accented_fg)
+            .add_modifier(Modifier::BOLD);
+
         // Render tabular data with left alignment and text wrapping
-        let mut text_lines = Vec::new();
-        for (key, value) in &self.lines {
+        let mut text_lines: Vec<Line<'_>> = Vec::new();
+        let mut lines_remaining = renderable_lines;
+
+        'outer: for (key, value) in &self.lines {
+            if lines_remaining == 0 {
+                break;
+            }
             let padding = " ".repeat(max_key_len - key.width());
 
-            // If value contains calculating text, show spinner
-            let display_value = if value.contains(t.file_info_calculating()) {
-                format!("{} {}", self.get_spinner_char(), value)
-            } else {
-                value.clone()
-            };
+            match value {
+                ModalValue::Text(text) => {
+                    // If value contains calculating text, show spinner
+                    let display_value = if text.contains(t.file_info_calculating()) {
+                        format!("{} {}", self.get_spinner_char(), text)
+                    } else {
+                        text.clone()
+                    };
 
-            // Wrap the value to fit available width
-            let wrapped_values = Self::wrap_text(&display_value, available_value_width);
+                    // Wrap the value to fit available width
+                    let wrapped_values = Self::wrap_text(&display_value, available_value_width);
 
-            // First line with key
-            if !wrapped_values.is_empty() {
-                // For empty keys, add 2 spaces instead of ": " to maintain alignment
-                let spans = if key.is_empty() {
-                    vec![
-                        Span::styled(
-                            format!("  {}{}", key, padding),
-                            Style::default()
-                                .fg(theme.accented_fg)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw("  "), // 2 spaces to align with ": "
-                        Span::styled(wrapped_values[0].clone(), Style::default().fg(theme.fg)),
-                    ]
-                } else {
-                    vec![
-                        Span::styled(
-                            format!("  {}{}", key, padding),
-                            Style::default()
-                                .fg(theme.accented_fg)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(": "),
-                        Span::styled(wrapped_values[0].clone(), Style::default().fg(theme.fg)),
-                    ]
-                };
-                text_lines.push(Line::from(spans));
+                    // First line with key
+                    if !wrapped_values.is_empty() {
+                        let separator = if key.is_empty() { "  " } else { ": " };
+                        let spans = vec![
+                            Span::styled(format!("  {}{}", key, padding), key_style),
+                            Span::raw(separator),
+                            Span::styled(wrapped_values[0].clone(), Style::default().fg(theme.fg)),
+                        ];
+                        text_lines.push(Line::from(spans));
+                        lines_remaining -= 1;
 
-                // Additional lines with indent (continuation of value)
-                // Both empty and normal keys now have same indent since we add 2 spaces for empty keys
-                let indent = " ".repeat(max_key_len + 4); // "  " + key_len + "  " or ": "
-                for wrapped_line in wrapped_values.iter().skip(1) {
-                    text_lines.push(Line::from(vec![Span::styled(
-                        format!("{}{}", indent, wrapped_line),
-                        Style::default().fg(theme.fg),
-                    )]));
+                        // Additional lines with indent (continuation of value)
+                        let indent = " ".repeat(max_key_len + 4); // "  " + key_len + "  " or ": "
+                        for wrapped_line in wrapped_values.iter().skip(1) {
+                            if lines_remaining == 0 {
+                                break 'outer;
+                            }
+                            text_lines.push(Line::from(vec![Span::styled(
+                                format!("{}{}", indent, wrapped_line),
+                                Style::default().fg(theme.fg),
+                            )]));
+                            lines_remaining -= 1;
+                        }
+                    }
+                }
+                ModalValue::Segments(segments) => {
+                    let separator = if key.is_empty() { "  " } else { ": " };
+                    let mut spans = vec![
+                        Span::styled(format!("  {}{}", key, padding), key_style),
+                        Span::raw(separator),
+                    ];
+                    for segment in segments {
+                        let color = match segment.style {
+                            SegmentStyle::Default => theme.fg,
+                            SegmentStyle::Success => theme.success,
+                            SegmentStyle::Error => theme.error,
+                            SegmentStyle::Warning => theme.warning,
+                            SegmentStyle::Disabled => theme.disabled,
+                        };
+                        spans.push(Span::styled(
+                            segment.text.clone(),
+                            Style::default().fg(color),
+                        ));
+                    }
+                    text_lines.push(Line::from(spans));
+                    lines_remaining -= 1;
                 }
             }
+        }
+
+        // Add truncation indicator if needed
+        if truncated {
+            let indent = " ".repeat(max_key_len + 4);
+            text_lines.push(Line::from(vec![Span::styled(
+                format!("{}...", indent),
+                Style::default().fg(theme.disabled),
+            )]));
         }
 
         let data = Paragraph::new(text_lines).alignment(Alignment::Left);

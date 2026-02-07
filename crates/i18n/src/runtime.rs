@@ -1507,6 +1507,42 @@ impl Translation for RuntimeTranslation {
         )
     }
 
+    fn git_commit_info_title(&self, hash: &str) -> String {
+        self.format("git_commit_info_title", &[("hash", hash)])
+    }
+
+    fn git_commit_author(&self) -> &str {
+        self.get_string("git_commit_author")
+    }
+
+    fn git_commit_date(&self) -> &str {
+        self.get_string("git_commit_date")
+    }
+
+    fn git_commit_message(&self) -> &str {
+        self.get_string("git_commit_message")
+    }
+
+    fn git_commit_files(&self) -> &str {
+        self.get_string("git_commit_files")
+    }
+
+    fn git_commit_files_modified(&self) -> &str {
+        self.get_string("git_commit_files_modified")
+    }
+
+    fn git_commit_files_added(&self) -> &str {
+        self.get_string("git_commit_files_added")
+    }
+
+    fn git_commit_files_deleted(&self) -> &str {
+        self.get_string("git_commit_files_deleted")
+    }
+
+    fn git_commit_lines(&self) -> &str {
+        self.get_string("git_commit_lines")
+    }
+
     fn outline_title(&self) -> &str {
         self.get_string("outline_title")
     }

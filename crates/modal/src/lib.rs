@@ -52,7 +52,7 @@ pub use directory_picker::DirectoryPickerModal;
 pub use directory_switcher::{DirectoryItem, DirectorySwitcherModal};
 pub use editable_select::{EditableSelectModal, SelectOption};
 pub use file_search::{FileSearchModal, SearchResultItem};
-pub use info::InfoModal;
+pub use info::{InfoModal, ModalValue, SegmentStyle, StyledSegment};
 pub use info_action::{ActionButton, InfoActionModal, InfoActionResult};
 pub use input::InputModal;
 pub use progress::ProgressModal;
