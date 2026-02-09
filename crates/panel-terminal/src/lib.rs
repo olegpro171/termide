@@ -763,16 +763,15 @@ impl Terminal {
         };
 
         // Pre-compute selection bounds if selection exists (now in absolute coordinates)
-        let selection_bounds = if has_selection {
-            let (start, end) = (selection_start.unwrap(), selection_end.unwrap());
-            let (start, end) = if start <= end {
-                (start, end)
-            } else {
-                (end, start)
-            };
-            Some((start, end))
-        } else {
-            None
+        let selection_bounds = match (selection_start, selection_end) {
+            (Some(start), Some(end)) if has_selection => {
+                if start <= end {
+                    Some((start, end))
+                } else {
+                    Some((end, start))
+                }
+            }
+            _ => None,
         };
 
         // Calculate base for converting visual row to absolute

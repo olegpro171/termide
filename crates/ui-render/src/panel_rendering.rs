@@ -71,7 +71,7 @@ fn smart_truncate_title(title: &str, max_width: usize) -> String {
         let mut result = String::new();
         let mut width = 0;
         for ch in title.chars() {
-            let ch_width = ch.to_string().width();
+            let ch_width = ch.width().unwrap_or(0);
             if width + ch_width > max_width {
                 break;
             }
@@ -96,7 +96,7 @@ fn smart_truncate_title(title: &str, max_width: usize) -> String {
 
         // Remove chars from start until we fit
         while current_width > target_width && start_idx < main_chars.len() {
-            current_width -= main_chars[start_idx].to_string().width();
+            current_width -= main_chars[start_idx].width().unwrap_or(0);
             start_idx += 1;
         }
 

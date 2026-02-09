@@ -94,14 +94,14 @@ pub fn get_disk_space_for_path(path: &str) -> Option<DiskSpaceInfo> {
             // On macOS, f_bavail and f_blocks are u32, f_bsize is u64
             // On Linux, all are u64
             #[cfg(target_os = "macos")]
-            let available = (stat.f_bavail as u64) * stat.f_bsize;
+            let available = (stat.f_bavail as u64).saturating_mul(stat.f_bsize);
             #[cfg(not(target_os = "macos"))]
-            let available = stat.f_bavail * stat.f_bsize;
+            let available = stat.f_bavail.saturating_mul(stat.f_bsize);
 
             #[cfg(target_os = "macos")]
-            let total = (stat.f_blocks as u64) * stat.f_bsize;
+            let total = (stat.f_blocks as u64).saturating_mul(stat.f_bsize);
             #[cfg(not(target_os = "macos"))]
-            let total = stat.f_blocks * stat.f_bsize;
+            let total = stat.f_blocks.saturating_mul(stat.f_bsize);
 
             Some(DiskSpaceInfo {
                 device,

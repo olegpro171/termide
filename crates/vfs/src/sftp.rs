@@ -23,6 +23,9 @@ use crate::types::{
 /// Default connection timeout in seconds.
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
+/// Chunk size for chunked I/O operations (64KB).
+const CHUNK_SIZE: usize = 64 * 1024;
+
 /// Acquire SFTP mutex lock, converting poison error to VfsError.
 fn lock_sftp(sftp: &Arc<Mutex<Sftp>>) -> VfsResult<std::sync::MutexGuard<'_, Sftp>> {
     sftp.lock().map_err(|_| VfsError::RemoteError {
@@ -565,7 +568,6 @@ impl SftpProvider {
                     let mut local_file =
                         std::fs::File::create(&local_entry).map_err(VfsError::Io)?;
 
-                    const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
                     let mut buffer = vec![0u8; CHUNK_SIZE];
                     let mut current_file_bytes = 0u64;
 
@@ -795,7 +797,6 @@ impl SftpProvider {
                     remote_path.display()
                 );
 
-                const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
                 let mut buffer = vec![0u8; CHUNK_SIZE];
                 let mut current_file_bytes = 0u64;
 
@@ -1679,7 +1680,6 @@ impl VfsProvider for SftpProvider {
                         }
                     }
 
-                    const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
                     let mut buffer = vec![0u8; CHUNK_SIZE];
                     let mut bytes_uploaded: u64 = 0;
 
@@ -1867,7 +1867,6 @@ impl VfsProvider for SftpProvider {
                     let mut local_file =
                         std::fs::File::create(&local_path).map_err(VfsError::Io)?;
 
-                    const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
                     let mut buffer = vec![0u8; CHUNK_SIZE];
                     let mut bytes_downloaded = 0u64;
 

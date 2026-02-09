@@ -204,7 +204,9 @@ impl App {
                 }
             }
 
-            let current_width = self.layout_manager.panel_groups[group_idx].width.unwrap();
+            let current_width = self.layout_manager.panel_groups[group_idx]
+                .width
+                .unwrap_or(min_width as u16);
             let desired_new_width = ((current_width as i16 + delta).clamp(min_width, 300)) as u16;
             let actual_delta = desired_new_width as i16 - current_width as i16;
 
@@ -219,7 +221,7 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(idx, _)| *idx != group_idx)
-                .map(|(idx, g)| (idx, g.width.unwrap()))
+                .map(|(idx, g)| (idx, g.width.unwrap_or(min_width as u16)))
                 .collect();
 
             let total_other_width: u16 = other_groups.iter().map(|(_, w)| *w).sum();

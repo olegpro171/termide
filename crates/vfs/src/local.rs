@@ -14,6 +14,19 @@ use crate::types::{
     VfsMetadata, VfsOperation, VfsPath,
 };
 
+/// Maximum directory nesting depth for recursive operations.
+const MAX_DEPTH: usize = 100;
+
+/// Map an `io::Error` to a `VfsError`, using `NotFound` / `PermissionDenied`
+/// variants when the error kind matches.
+fn map_io_error(e: std::io::Error, path: PathBuf) -> VfsError {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => VfsError::NotFound { path },
+        std::io::ErrorKind::PermissionDenied => VfsError::PermissionDenied { path },
+        _ => VfsError::Io(e),
+    }
+}
+
 /// Local filesystem provider.
 ///
 /// This provider wraps the standard library's filesystem operations
@@ -51,19 +64,7 @@ impl LocalFileSystem {
         let vfs_path = VfsPath::local(path);
         let mut entries = Vec::new();
 
-        let read_dir = fs::read_dir(path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                VfsError::NotFound {
-                    path: path.to_path_buf(),
-                }
-            } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-                VfsError::PermissionDenied {
-                    path: path.to_path_buf(),
-                }
-            } else {
-                VfsError::Io(e)
-            }
-        })?;
+        let read_dir = fs::read_dir(path).map_err(|e| map_io_error(e, path.to_path_buf()))?;
 
         for entry in read_dir {
             let entry = entry?;
@@ -94,8 +95,6 @@ impl LocalFileSystem {
 
     /// Copy directory recursively (internal helper).
     fn copy_dir_recursive(src: &Path, dst: &Path, depth: usize) -> VfsResult<()> {
-        const MAX_DEPTH: usize = 100;
-
         if depth > MAX_DEPTH {
             return Err(VfsError::RemoteError {
                 message: format!("Directory nesting too deep (> {})", MAX_DEPTH),
@@ -135,25 +134,11 @@ impl LocalFileSystem {
 
     /// Delete directory recursively (internal helper).
     fn delete_dir_recursive(path: &Path) -> VfsResult<()> {
-        fs::remove_dir_all(path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                VfsError::NotFound {
-                    path: path.to_path_buf(),
-                }
-            } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-                VfsError::PermissionDenied {
-                    path: path.to_path_buf(),
-                }
-            } else {
-                VfsError::Io(e)
-            }
-        })
+        fs::remove_dir_all(path).map_err(|e| map_io_error(e, path.to_path_buf()))
     }
 
     /// Count files and total size in a directory (internal helper).
     fn count_directory_contents(path: &Path, depth: usize) -> VfsResult<(usize, u64)> {
-        const MAX_DEPTH: usize = 100;
-
         if depth > MAX_DEPTH {
             return Err(VfsError::RemoteError {
                 message: format!("Directory nesting too deep (> {})", MAX_DEPTH),
@@ -262,8 +247,6 @@ impl LocalFileSystem {
         total_files: usize,
         depth: usize,
     ) -> VfsResult<()> {
-        const MAX_DEPTH: usize = 100;
-
         if depth > MAX_DEPTH {
             return Err(VfsError::RemoteError {
                 message: format!("Directory nesting too deep (> {})", MAX_DEPTH),
@@ -428,13 +411,7 @@ impl VfsProvider for LocalFileSystem {
         thread::spawn(move || {
             let result = fs::metadata(&local_path)
                 .map(VfsMetadata::from)
-                .map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        VfsError::NotFound { path: local_path }
-                    } else {
-                        VfsError::Io(e)
-                    }
-                });
+                .map_err(|e| map_io_error(e, local_path));
             let _ = tx.send(result);
         });
 
@@ -449,15 +426,7 @@ impl VfsProvider for LocalFileSystem {
 
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            let result = fs::read(&local_path).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    VfsError::NotFound { path: local_path }
-                } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    VfsError::PermissionDenied { path: local_path }
-                } else {
-                    VfsError::Io(e)
-                }
-            });
+            let result = fs::read(&local_path).map_err(|e| map_io_error(e, local_path));
             let _ = tx.send(result);
         });
 
@@ -473,13 +442,7 @@ impl VfsProvider for LocalFileSystem {
         let data = data.to_vec();
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            let result = fs::write(&local_path, data).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    VfsError::PermissionDenied { path: local_path }
-                } else {
-                    VfsError::Io(e)
-                }
-            });
+            let result = fs::write(&local_path, data).map_err(|e| map_io_error(e, local_path));
             let _ = tx.send(result);
         });
 
@@ -499,17 +462,7 @@ impl VfsProvider for LocalFileSystem {
             } else {
                 fs::remove_file(&local_path)
             }
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    VfsError::NotFound {
-                        path: local_path.clone(),
-                    }
-                } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    VfsError::PermissionDenied { path: local_path }
-                } else {
-                    VfsError::Io(e)
-                }
-            });
+            .map_err(|e| map_io_error(e, local_path));
             let _ = tx.send(result);
         });
 
@@ -543,15 +496,7 @@ impl VfsProvider for LocalFileSystem {
 
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            let result = fs::rename(&from_path, &to_path).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    VfsError::NotFound { path: from_path }
-                } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    VfsError::PermissionDenied { path: from_path }
-                } else {
-                    VfsError::Io(e)
-                }
-            });
+            let result = fs::rename(&from_path, &to_path).map_err(|e| map_io_error(e, from_path));
             let _ = tx.send(result);
         });
 
@@ -573,15 +518,9 @@ impl VfsProvider for LocalFileSystem {
             let result = if from_path.is_dir() {
                 Self::copy_dir_recursive(&from_path, &to_path, 0)
             } else {
-                fs::copy(&from_path, &to_path).map(|_| ()).map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        VfsError::NotFound { path: from_path }
-                    } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-                        VfsError::PermissionDenied { path: from_path }
-                    } else {
-                        VfsError::Io(e)
-                    }
-                })
+                fs::copy(&from_path, &to_path)
+                    .map(|_| ())
+                    .map_err(|e| map_io_error(e, from_path))
             };
             let _ = tx.send(result);
         });
@@ -727,10 +666,10 @@ impl VfsProvider for LocalFileSystem {
                     #[allow(clippy::unnecessary_cast)]
                     let block_size = stat.f_frsize as u64;
                     #[allow(clippy::unnecessary_cast)]
-                    let total = stat.f_blocks as u64 * block_size;
+                    let total = (stat.f_blocks as u64).saturating_mul(block_size);
                     #[allow(clippy::unnecessary_cast)]
-                    let free = stat.f_bfree as u64 * block_size;
-                    let used = total - free;
+                    let free = (stat.f_bfree as u64).saturating_mul(block_size);
+                    let used = total.saturating_sub(free);
                     return Some(DiskSpace { total, free, used });
                 }
             }
