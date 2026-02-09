@@ -81,7 +81,15 @@ impl TextBuffer {
             LineEnding::LF
         };
 
-        // Rope automatically normalizes line endings to \n
+        // Normalize CRLF to LF for internal storage.
+        // The original line ending type is preserved in `line_ending`
+        // and restored when saving to disk.
+        let contents = if line_ending == LineEnding::CRLF {
+            contents.replace("\r\n", "\n")
+        } else {
+            contents
+        };
+
         let rope = Rope::from_str(&contents);
 
         Ok(Self {
