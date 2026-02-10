@@ -1,4 +1,4 @@
-//! Regex fallback for symbol extraction from markdown and HTML files.
+//! Regex fallback for symbol extraction from markdown, HTML, YAML, and XML files.
 
 use regex::Regex;
 use std::sync::OnceLock;
@@ -8,6 +8,10 @@ use crate::symbols::{SymbolInfo, SymbolKind};
 static MD_HEADING_RE: OnceLock<Regex> = OnceLock::new();
 static HTML_HEADING_RE: OnceLock<Regex> = OnceLock::new();
 static TOML_SECTION_RE: OnceLock<Regex> = OnceLock::new();
+static YAML_KEY_RE: OnceLock<Regex> = OnceLock::new();
+static XML_OPEN_RE: OnceLock<Regex> = OnceLock::new();
+static XML_CLOSE_RE: OnceLock<Regex> = OnceLock::new();
+static XML_SELF_CLOSE_RE: OnceLock<Regex> = OnceLock::new();
 
 fn md_heading_regex() -> &'static Regex {
     MD_HEADING_RE.get_or_init(|| Regex::new(r"^(#{1,6})\s+(.+)$").expect("valid regex"))
@@ -26,12 +30,35 @@ fn toml_section_regex() -> &'static Regex {
     })
 }
 
+fn yaml_key_regex() -> &'static Regex {
+    YAML_KEY_RE.get_or_init(|| {
+        Regex::new(r"^(\s*)([a-zA-Z0-9_][a-zA-Z0-9_ .-]*)\s*:").expect("valid regex")
+    })
+}
+
+fn xml_open_regex() -> &'static Regex {
+    XML_OPEN_RE
+        .get_or_init(|| Regex::new(r"<([a-zA-Z][a-zA-Z0-9_:-]*)[>\s/]").expect("valid regex"))
+}
+
+fn xml_close_regex() -> &'static Regex {
+    XML_CLOSE_RE
+        .get_or_init(|| Regex::new(r"</([a-zA-Z][a-zA-Z0-9_:-]*)\s*>").expect("valid regex"))
+}
+
+fn xml_self_close_regex() -> &'static Regex {
+    XML_SELF_CLOSE_RE
+        .get_or_init(|| Regex::new(r"<([a-zA-Z][a-zA-Z0-9_:-]*)[^>]*/\s*>").expect("valid regex"))
+}
+
 /// Extract symbols using regex patterns for languages without tree-sitter support.
 pub fn extract_symbols_regex(source: &str, language: &str) -> Vec<SymbolInfo> {
     match language {
         "markdown" => extract_markdown_headings(source),
         "html" => extract_html_headings(source),
         "toml" => extract_toml_sections(source),
+        "yaml" => extract_yaml_keys(source),
+        "xml" => extract_xml_elements(source),
         _ => Vec::new(),
     }
 }
@@ -160,6 +187,143 @@ fn extract_html_headings(source: &str) -> Vec<SymbolInfo> {
     symbols
 }
 
+fn extract_yaml_keys(source: &str) -> Vec<SymbolInfo> {
+    let re = yaml_key_regex();
+    let mut symbols = Vec::new();
+
+    for (line_idx, line) in source.lines().enumerate() {
+        let trimmed = line.trim_start();
+        // Skip comments and document markers
+        if trimmed.starts_with('#') || trimmed.starts_with("---") || trimmed.starts_with("...") {
+            continue;
+        }
+
+        if let Some(caps) = re.captures(line) {
+            let indent = caps.get(1).map(|m| m.as_str().len()).unwrap_or(0);
+            let depth = indent / 2;
+            if depth > 1 {
+                continue;
+            }
+            let name = caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+            if name.is_empty() {
+                continue;
+            }
+            symbols.push(SymbolInfo {
+                name: name.to_string(),
+                full_name: None,
+                kind: SymbolKind::Section,
+                line: line_idx,
+                column: indent,
+                depth,
+            });
+        }
+    }
+
+    symbols
+}
+
+fn extract_xml_elements(source: &str) -> Vec<SymbolInfo> {
+    let open_re = xml_open_regex();
+    let close_re = xml_close_regex();
+    let self_close_re = xml_self_close_regex();
+    let mut symbols = Vec::new();
+    let mut stack: Vec<String> = Vec::new();
+
+    for (line_idx, line) in source.lines().enumerate() {
+        let trimmed = line.trim_start();
+        // Skip processing instructions, comments, and DOCTYPE
+        if trimmed.starts_with("<?") || trimmed.starts_with("<!--") || trimmed.starts_with("<!") {
+            continue;
+        }
+
+        // Process all tags on the line by scanning from left to right
+        let mut pos = 0;
+        while pos < line.len() {
+            let remaining = &line[pos..];
+
+            // Find the next '<' character
+            let Some(lt) = remaining.find('<') else {
+                break;
+            };
+            let tag_start = pos + lt;
+            let tag_rest = &line[tag_start..];
+
+            // Skip comments/PI that appear mid-line
+            if tag_rest.starts_with("<?")
+                || tag_rest.starts_with("<!--")
+                || tag_rest.starts_with("<!")
+            {
+                pos = tag_start + 1;
+                continue;
+            }
+
+            // Closing tag (must start with </)
+            if tag_rest.starts_with("</") {
+                if let Some(caps) = close_re.captures(tag_rest) {
+                    let m = caps.get(0).unwrap();
+                    let tag = caps.get(1).map(|c| c.as_str()).unwrap_or("");
+                    if let Some(p) = stack.iter().rposition(|t| t == tag) {
+                        stack.truncate(p);
+                    }
+                    pos = tag_start + m.end();
+                    continue;
+                }
+                pos = tag_start + 1;
+                continue;
+            }
+
+            // Self-closing tag (check before open since both start with <tag)
+            if let Some(caps) = self_close_re.captures(tag_rest) {
+                let m = caps.get(0).unwrap();
+                // Ensure the match starts at position 0 in tag_rest
+                if m.start() == 0 {
+                    let tag = caps.get(1).map(|c| c.as_str()).unwrap_or("");
+                    if !tag.is_empty() && stack.len() <= 1 {
+                        symbols.push(SymbolInfo {
+                            name: tag.to_string(),
+                            full_name: None,
+                            kind: SymbolKind::Section,
+                            line: line_idx,
+                            column: tag_start,
+                            depth: stack.len(),
+                        });
+                    }
+                    pos = tag_start + m.end();
+                    continue;
+                }
+            }
+
+            // Opening tag
+            if let Some(caps) = open_re.captures(tag_rest) {
+                let m = caps.get(0).unwrap();
+                if m.start() == 0 {
+                    let tag = caps.get(1).map(|c| c.as_str()).unwrap_or("");
+                    if !tag.is_empty() {
+                        if stack.len() <= 1 {
+                            symbols.push(SymbolInfo {
+                                name: tag.to_string(),
+                                full_name: None,
+                                kind: SymbolKind::Section,
+                                line: line_idx,
+                                column: tag_start,
+                                depth: stack.len(),
+                            });
+                        }
+                        stack.push(tag.to_string());
+                    }
+                    pos = tag_start + m.end();
+                    continue;
+                }
+            }
+
+            // No tag pattern matched, advance past '<'
+            pos = tag_start + 1;
+        }
+    }
+
+    symbols
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +396,47 @@ mod tests {
         // requires is a child of the emitted generate-rpm
         assert_eq!(symbols[3].name, "requires");
         assert_eq!(symbols[3].depth, 2);
+    }
+
+    #[test]
+    fn test_yaml_top_level_keys() {
+        let source = "name: my-app\nversion: 1.0\ndependencies:\n  foo: ^1.0\n  bar: ^2.0\n    baz: nested\n";
+        let symbols = extract_yaml_keys(source);
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["name", "version", "dependencies", "foo", "bar"]);
+        assert_eq!(symbols[0].depth, 0);
+        assert_eq!(symbols[3].depth, 1);
+        // "baz" at 4 spaces (depth 2) should be excluded
+    }
+
+    #[test]
+    fn test_yaml_comments_skipped() {
+        let source =
+            "# This is a comment\nname: value\n  # indented comment\n  key: val\n---\nnext: doc\n";
+        let symbols = extract_yaml_keys(source);
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["name", "key", "next"]);
+    }
+
+    #[test]
+    fn test_xml_nested_elements() {
+        let source = "<root>\n  <child>\n    <deep>text</deep>\n  </child>\n  <other>text</other>\n</root>\n";
+        let symbols = extract_xml_elements(source);
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["root", "child", "other"]);
+        assert_eq!(symbols[0].depth, 0);
+        assert_eq!(symbols[1].depth, 1);
+        assert_eq!(symbols[2].depth, 1);
+    }
+
+    #[test]
+    fn test_xml_self_closing() {
+        let source = "<?xml version=\"1.0\"?>\n<root>\n  <item name=\"a\" />\n  <item name=\"b\" />\n</root>\n";
+        let symbols = extract_xml_elements(source);
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["root", "item", "item"]);
+        assert_eq!(symbols[0].depth, 0);
+        assert_eq!(symbols[1].depth, 1);
+        assert_eq!(symbols[2].depth, 1);
     }
 }

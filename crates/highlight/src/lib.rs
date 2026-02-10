@@ -103,6 +103,7 @@ pub fn detect_language(path: &Path) -> Option<&'static str> {
         "yaml" | "yml" => Some("yaml"),
         "sh" | "bash" | "zsh" => Some("bash"),
         "md" | "markdown" => Some("markdown"),
+        "xml" | "xsl" | "xsd" | "svg" | "plist" => Some("xml"),
         _ => None,
     }
 }
