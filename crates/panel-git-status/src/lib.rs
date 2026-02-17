@@ -217,8 +217,18 @@ impl GitStatusPanel {
         let repo = match self.repo_manager.current() {
             Some(r) => r.to_path_buf(),
             None => {
-                self.is_loading = false;
-                return;
+                // Try to re-discover repos (e.g. after external `git init`)
+                if self.repo_manager.update(&self.initial_paths) {
+                    if let Some(r) = self.repo_manager.current() {
+                        r.to_path_buf()
+                    } else {
+                        self.is_loading = false;
+                        return;
+                    }
+                } else {
+                    self.is_loading = false;
+                    return;
+                }
             }
         };
 
