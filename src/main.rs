@@ -11,7 +11,7 @@ use crossterm::{
     execute,
     terminal::{
         disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
-        LeaveAlternateScreen,
+        LeaveAlternateScreen, SetTitle,
     },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
@@ -86,12 +86,20 @@ fn main() -> Result<()> {
     // This enables proper Alt+Cyrillic handling in modern terminals like Ghostty, Kitty, WezTerm
     let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
 
+    let title = format!(
+        "Termide: {}",
+        std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    );
+
     execute!(
         stdout,
         EnterAlternateScreen,
         EnableMouseCapture,
         EnableFocusChange,
-        EnableBracketedPaste
+        EnableBracketedPaste,
+        SetTitle(title)
     )?;
 
     if keyboard_enhanced {
@@ -140,7 +148,8 @@ fn main() -> Result<()> {
         LeaveAlternateScreen,
         DisableMouseCapture,
         DisableFocusChange,
-        DisableBracketedPaste
+        DisableBracketedPaste,
+        SetTitle("")
     )?;
     terminal.show_cursor()?;
 
