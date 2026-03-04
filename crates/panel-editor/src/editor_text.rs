@@ -406,6 +406,116 @@ impl Editor {
         Ok(())
     }
 
+    /// Toggle line comment for current line or selected lines
+    pub(crate) fn toggle_comment(&mut self) -> Result<()> {
+        self.close_search();
+
+        // Determine comment prefix from syntax
+        let comment_prefix = match self
+            .render_cache
+            .highlight
+            .current_syntax()
+            .map(|s| s.to_lowercase())
+            .as_deref()
+        {
+            Some(
+                "rust" | "go" | "c" | "cpp" | "c++" | "java" | "javascript" | "typescript" | "tsx"
+                | "jsx" | "php" | "swift" | "kotlin" | "scala" | "c#" | "dart" | "zig",
+            ) => "// ",
+            Some(
+                "python" | "ruby" | "bash" | "shell" | "sh" | "toml" | "yaml" | "yml" | "nix"
+                | "perl" | "r" | "makefile" | "dockerfile" | "fish",
+            ) => "# ",
+            Some("haskell" | "lua" | "sql") => "-- ",
+            Some("lisp" | "clojure" | "scheme") => ";; ",
+            Some("html" | "xml") => "<!-- ", // simplified, no closing tag
+            _ => "// ",
+        };
+        let prefix_trimmed = comment_prefix.trim_end();
+
+        // Get line range from selection or current cursor
+        let (start_line, end_line) = if let Some(ref sel) = self.selection {
+            (sel.start().line, sel.end().line)
+        } else {
+            (self.cursor.line, self.cursor.line)
+        };
+
+        // Determine action: if ALL lines start with comment prefix → uncomment, else comment
+        let all_commented = (start_line..=end_line).all(|line_idx| {
+            self.buffer
+                .line(line_idx)
+                .map(|line| line.trim_start().starts_with(prefix_trimmed))
+                .unwrap_or(true) // empty/missing lines count as commented
+        });
+
+        if all_commented {
+            // Uncomment: remove comment prefix from each line
+            let mut cursor_line_removed = 0;
+            let mut anchor_line_removed = 0;
+            let mut active_line_removed = 0;
+
+            for line_idx in (start_line..=end_line).rev() {
+                if let Some(line) = self.buffer.line(line_idx) {
+                    let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
+                    let after_spaces = &line[leading_spaces..];
+
+                    // Check for prefix with space first, then without
+                    let remove_len = if after_spaces.starts_with(comment_prefix) {
+                        comment_prefix.len()
+                    } else if after_spaces.starts_with(prefix_trimmed) {
+                        prefix_trimmed.len()
+                    } else {
+                        continue;
+                    };
+
+                    let start = Cursor::at(line_idx, leading_spaces);
+                    let end = Cursor::at(line_idx, leading_spaces + remove_len);
+                    self.buffer.delete_range(&start, &end)?;
+
+                    if line_idx == self.cursor.line {
+                        cursor_line_removed = remove_len;
+                    }
+                    if let Some(ref sel) = self.selection {
+                        if line_idx == sel.anchor.line {
+                            anchor_line_removed = remove_len;
+                        }
+                        if line_idx == sel.active.line {
+                            active_line_removed = remove_len;
+                        }
+                    }
+                }
+            }
+
+            self.cursor.column = self.cursor.column.saturating_sub(cursor_line_removed);
+            if let Some(ref mut sel) = self.selection {
+                sel.anchor.column = sel.anchor.column.saturating_sub(anchor_line_removed);
+                sel.active.column = sel.active.column.saturating_sub(active_line_removed);
+            }
+        } else {
+            // Comment: insert comment prefix at column 0 of each line
+            let prefix_len = comment_prefix.len();
+
+            for line_idx in (start_line..=end_line).rev() {
+                let cursor_at_start = Cursor::at(line_idx, 0);
+                self.buffer.insert(&cursor_at_start, comment_prefix)?;
+            }
+
+            self.cursor.column += prefix_len;
+            if let Some(ref mut sel) = self.selection {
+                sel.anchor.column += prefix_len;
+                sel.active.column += prefix_len;
+            }
+        }
+
+        self.input.preferred_column = None;
+        self.clamp_cursor();
+
+        self.invalidate_cache_after_edit(start_line, true);
+        self.schedule_git_diff_update();
+
+        Ok(())
+    }
+
     // =========================================================================
     // Cursor Helpers (Private)
     // =========================================================================

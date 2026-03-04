@@ -86,6 +86,7 @@ pub enum EditorCommand {
 
     // Advanced editing
     DuplicateLine,
+    ToggleComment,
 
     // Search
     StartSearch,
@@ -363,6 +364,16 @@ impl EditorCommand {
             )
         {
             return Self::DuplicateLine;
+        }
+        if !read_only
+            && matches_binding_or_default(
+                &keybindings.toggle_comment,
+                &key,
+                KeyCode::Char('/'),
+                KeyModifiers::CONTROL,
+            )
+        {
+            return Self::ToggleComment;
         }
 
         // LSP Completion trigger (configurable, default Ctrl+.)
@@ -737,6 +748,7 @@ impl EditorCommand {
 
             // Advanced editing
             Self::DuplicateLine => editor.duplicate_line(),
+            Self::ToggleComment => editor.toggle_comment(),
 
             // Search
             Self::StartSearch => {

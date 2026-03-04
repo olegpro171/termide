@@ -235,6 +235,7 @@ pub struct EditorKeybindings {
 
     // Editing
     pub duplicate_line: Option<KeyBinding>,
+    pub toggle_comment: Option<KeyBinding>,
 
     // Search & Replace
     pub search: Option<KeyBinding>,
@@ -409,6 +410,7 @@ impl EditorKeybindings {
 
         // Editing
         set_default!(duplicate_line, "Ctrl+D");
+        set_default!(toggle_comment, "Ctrl+/");
 
         // Search & Replace
         set_default!(search, "Ctrl+F");
