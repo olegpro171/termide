@@ -1064,8 +1064,8 @@ impl Terminal {
 
             #[cfg(windows)]
             {
-                use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
                 use windows_sys::Win32::Foundation::CloseHandle;
+                use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
 
                 // SAFETY: CreateToolhelp32Snapshot with TH32CS_SNAPPROCESS takes a
                 // snapshot of all processes. The returned handle must be closed.
@@ -1083,12 +1083,24 @@ impl Terminal {
                             loop {
                                 if entry.th32ParentProcessID == pid {
                                     // Found a child of our shell
-                                    let name_len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
-                                    found_child = Some(String::from_utf16_lossy(&entry.szExeFile[..name_len]));
+                                    let name_len = entry
+                                        .szExeFile
+                                        .iter()
+                                        .position(|&c| c == 0)
+                                        .unwrap_or(entry.szExeFile.len());
+                                    found_child = Some(String::from_utf16_lossy(
+                                        &entry.szExeFile[..name_len],
+                                    ));
                                 }
                                 if entry.th32ProcessID == pid {
-                                    let name_len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
-                                    shell_name = Some(String::from_utf16_lossy(&entry.szExeFile[..name_len]));
+                                    let name_len = entry
+                                        .szExeFile
+                                        .iter()
+                                        .position(|&c| c == 0)
+                                        .unwrap_or(entry.szExeFile.len());
+                                    shell_name = Some(String::from_utf16_lossy(
+                                        &entry.szExeFile[..name_len],
+                                    ));
                                 }
                                 if Process32NextW(snapshot, &mut entry) == 0 {
                                     break;
@@ -1993,8 +2005,8 @@ impl Panel for Terminal {
 
             #[cfg(windows)]
             {
-                use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
                 use windows_sys::Win32::Foundation::CloseHandle;
+                use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
 
                 let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
                 if !snapshot.is_null() && snapshot != -1isize as *mut _ {

@@ -137,10 +137,7 @@ pub fn detect_link_at_position(
             let path_str = m.as_str();
             // Expand ~ to home directory
             let expanded = if let Some(suffix) = path_str.strip_prefix('~') {
-                if let Some(home) = std::env::var("HOME")
-                    .or_else(|_| std::env::var("USERPROFILE"))
-                    .ok()
-                {
+                if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
                     PathBuf::from(home).join(suffix.trim_start_matches(['/', '\\']))
                 } else {
                     PathBuf::from(path_str)

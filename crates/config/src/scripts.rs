@@ -3,6 +3,7 @@
 //! Scans `~/.local/share/termide/scripts/` for executable scripts and organizes them
 //! into a registry for the Scripts menu.
 
+#[cfg(not(unix))]
 use std::ffi::OsStr;
 use std::path::PathBuf;
 

@@ -50,7 +50,10 @@ pub fn detect_shell() -> String {
             }
         }
         // Check for Windows PowerShell
-        if let Ok(output) = std::process::Command::new("where").arg("powershell.exe").output() {
+        if let Ok(output) = std::process::Command::new("where")
+            .arg("powershell.exe")
+            .output()
+        {
             if output.status.success() {
                 if let Ok(path) = String::from_utf8(output.stdout) {
                     let path = path.trim();
