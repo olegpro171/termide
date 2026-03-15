@@ -29,19 +29,19 @@ fn get_clipboard() -> Result<&'static Mutex<Clipboard>, String> {
 ///
 /// This works over SSH when the terminal emulator supports OSC 52
 /// (Windows Terminal, iTerm2, kitty, foot, alacritty, etc.).
+///
+/// Safety: writes directly to stdout. This is called synchronously from key
+/// event handlers (between render frames), so there is no race with the
+/// ratatui render loop.
 fn osc52_copy(text: &str) -> Result<(), String> {
     let encoded = STANDARD.encode(text.as_bytes());
-    // OSC 52 ; c ; <base64> ST
-    // 'c' = clipboard selection
+    // OSC 52 ; c ; <base64> ST  ('c' = clipboard selection)
     let sequence = format!("\x1b]52;c;{}\x07", encoded);
     let mut stdout = std::io::stdout().lock();
     stdout
         .write_all(sequence.as_bytes())
-        .map_err(|e| format!("Failed to write OSC 52: {}", e))?;
-    stdout
-        .flush()
-        .map_err(|e| format!("Failed to flush OSC 52: {}", e))?;
-    Ok(())
+        .and_then(|_| stdout.flush())
+        .map_err(|e| format!("Failed to write OSC 52: {}", e))
 }
 
 /// Copy text to system clipboard.

@@ -371,17 +371,15 @@ impl App {
                     self.state.needs_redraw = true;
                 }
                 Event::Mouse(mouse) => {
-                    // Mouse movement (hover) should not reset idle timer or force redraws.
-                    // Only actionable events (clicks, drags) wake from idle.
-                    let is_move = matches!(mouse.kind, MouseEventKind::Moved);
-                    if !is_move {
+                    // Mouse movement (hover) should not reset idle timer, trigger
+                    // handler calls, or force redraws. Only actionable events
+                    // (clicks, scrolls, drags) wake from idle.
+                    if !matches!(mouse.kind, MouseEventKind::Moved) {
                         self.state.last_activity = std::time::Instant::now();
                         self.event_handler.set_tick_rate(Duration::from_millis(
                             termide_config::constants::EVENT_HANDLER_INTERVAL_MS,
                         ));
-                    }
-                    self.handle_mouse_event(mouse)?;
-                    if !is_move {
+                        self.handle_mouse_event(mouse)?;
                         self.state.needs_redraw = true;
                     }
                 }
