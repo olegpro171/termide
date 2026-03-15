@@ -564,7 +564,10 @@ impl App {
         // Multiple sources or trailing slash — always directory
         if is_multi_source || remote_url.ends_with('/') {
             let final_path = remote_dest.join(source_name);
-            let exists = vfs_manager.exists(&final_path).recv().unwrap_or(false);
+            let exists = vfs_manager.exists(&final_path).recv().unwrap_or_else(|e| {
+                log::error!("resolve_remote_dest: VFS channel error: {}", e);
+                false
+            });
             log::debug!(
                 "resolve_remote_dest: trailing slash/multi → final={}, exists={}",
                 final_path.to_url_string(),
@@ -578,7 +581,10 @@ impl App {
             Ok(meta) if meta.file_type.is_dir() => {
                 // Dest is an existing directory — copy INTO it
                 let final_path = remote_dest.join(source_name);
-                let exists = vfs_manager.exists(&final_path).recv().unwrap_or(false);
+                let exists = vfs_manager.exists(&final_path).recv().unwrap_or_else(|e| {
+                    log::error!("resolve_remote_dest: VFS channel error: {}", e);
+                    false
+                });
                 log::debug!(
                     "resolve_remote_dest: dest is dir → final={}, exists={}",
                     final_path.to_url_string(),
@@ -774,7 +780,10 @@ impl App {
                         let final_dest = if is_remote_dest_ow {
                             let base = termide_vfs::parse_vfs_url(&dest_str_ow)
                                 .map(|p| p.path)
-                                .unwrap_or_else(|_| operation.destination.clone());
+                                .unwrap_or_else(|e| {
+                                    log::warn!("Failed to parse VFS URL: {}", e);
+                                    operation.destination.clone()
+                                });
                             base.join(&item_name_ow)
                         } else {
                             path_utils::resolve_batch_destination_path(
@@ -1148,7 +1157,10 @@ impl App {
             if is_remote_dest {
                 let base = termide_vfs::parse_vfs_url(&dest_str)
                     .map(|p| p.path)
-                    .unwrap_or_else(|_| operation.destination.clone());
+                    .unwrap_or_else(|e| {
+                        log::warn!("Failed to parse VFS URL: {}", e);
+                        operation.destination.clone()
+                    });
                 base.join(&new_name)
             } else {
                 path_utils::resolve_rename_destination_path(&operation.destination, &new_name)
@@ -1157,7 +1169,10 @@ impl App {
             // Remote destination: parse URL path and join filename
             let base = termide_vfs::parse_vfs_url(&dest_str)
                 .map(|p| p.path)
-                .unwrap_or_else(|_| operation.destination.clone());
+                .unwrap_or_else(|e| {
+                    log::warn!("Failed to parse VFS URL: {}", e);
+                    operation.destination.clone()
+                });
             base.join(&item_name)
         } else {
             // Standard logic without renaming
@@ -1362,7 +1377,10 @@ impl App {
                         // use with_file_name(). Instead, parse URL and join.
                         let base = termide_vfs::parse_vfs_url(&dest_str)
                             .map(|p| p.path)
-                            .unwrap_or_else(|_| operation.destination.clone());
+                            .unwrap_or_else(|e| {
+                                log::warn!("Failed to parse VFS URL: {}", e);
+                                operation.destination.clone()
+                            });
                         base.join(&new_name)
                     } else {
                         path_utils::resolve_rename_destination_path(

@@ -436,14 +436,6 @@ impl FileManager {
             .position(|&ti| self.tree_entries[ti].file_entry.name == name)
     }
 
-    /// Find visible index by full path.
-    #[allow(dead_code)]
-    fn find_visible_by_path(&self, path: &std::path::Path) -> Option<usize> {
-        self.visible_indices
-            .iter()
-            .position(|&ti| self.tree_entries[ti].full_path == path)
-    }
-
     /// Create a new smart file manager
     pub fn new() -> Self {
         let current_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));

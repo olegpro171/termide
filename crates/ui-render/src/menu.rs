@@ -59,29 +59,51 @@ pub const BOOKMARKS_MENU_INDEX: usize = 3;
 /// Index of Options menu item (for submenu positioning)
 pub const OPTIONS_MENU_INDEX: usize = 4;
 
+/// Pre-computed x positions and widths for all menu items.
+/// Avoids repeated `get_menu_items()` allocations in hot paths.
+pub struct MenuLayout {
+    /// X position of each menu item
+    pub x_positions: [u16; MENU_ITEM_COUNT],
+    /// Width of each menu item
+    pub widths: [u16; MENU_ITEM_COUNT],
+    /// Total width used by all menu items (including separators)
+    pub total_width: usize,
+}
+
+impl MenuLayout {
+    pub fn compute() -> Self {
+        let menu_items = get_menu_items();
+        let mut x_positions = [0u16; MENU_ITEM_COUNT];
+        let mut widths = [0u16; MENU_ITEM_COUNT];
+        let mut x = 1u16; // initial " " padding
+
+        for (i, item) in menu_items.iter().enumerate() {
+            x_positions[i] = x;
+            widths[i] = item.width() as u16;
+            x += widths[i] + 2; // item + "  " separator
+        }
+
+        let total_width = x as usize - 1; // subtract trailing separator overshoot
+        Self {
+            x_positions,
+            widths,
+            total_width,
+        }
+    }
+}
+
 /// Calculate x position of a menu item by index.
 /// Used for positioning submenus next to their parent menu item.
 pub fn get_menu_item_x_position(menu_index: usize) -> u16 {
-    let menu_items = get_menu_items();
-    let mut x = 1_u16; // Start with initial padding (1 space)
-
-    for (i, item) in menu_items.iter().enumerate() {
-        if i == menu_index {
-            return x;
-        }
-        // Each item takes: item width + 2 spaces separator
-        x += item.width() as u16 + 2;
-    }
-
-    x
+    MenuLayout::compute().x_positions[menu_index.min(MENU_ITEM_COUNT - 1)]
 }
 
 /// Get the width of a menu item by index
 pub fn get_menu_item_width(menu_index: usize) -> u16 {
-    let menu_items = get_menu_items();
-    menu_items
+    MenuLayout::compute()
+        .widths
         .get(menu_index)
-        .map(|item| item.width() as u16)
+        .copied()
         .unwrap_or(0)
 }
 
@@ -108,13 +130,10 @@ pub fn get_resource_indicator_ranges(
     params: &MenuRenderParams,
 ) -> (std::ops::Range<u16>, std::ops::Range<u16>) {
     let t = i18n::t();
-    let menu_items = get_menu_items();
+    let layout = MenuLayout::compute();
 
     // Replicate the layout math from render_menu
-    let mut used_width: usize = 1; // initial " " padding
-    for item in &menu_items {
-        used_width += item.width() + 2; // item + "  " separator
-    }
+    let used_width = 1 + layout.total_width;
 
     let ram_unit_str = match params.ram_unit {
         RamUnit::Gigabytes => t.size_gigabytes(),

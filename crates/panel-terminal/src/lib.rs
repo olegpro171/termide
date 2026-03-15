@@ -1106,7 +1106,7 @@ impl Terminal {
             while let Some(pos) = search_text[start..].find(&query_lower) {
                 let col = start + pos;
                 matches.push((abs_row, col, query_lower.len()));
-                start = col + 1;
+                start = col + query_lower.len();
                 if start >= search_text.len() {
                     break;
                 }

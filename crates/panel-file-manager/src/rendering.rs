@@ -12,6 +12,9 @@ use termide_config::FileManagerSettings;
 use termide_git::GitStatus;
 use termide_theme::Theme;
 
+/// Pre-allocated spaces for padding (avoids `.repeat()` allocations in render loops).
+const PAD: &str = "                                                                                                                                                                                                        ";
+
 /// Get style for git status (extracted to avoid duplication)
 fn git_status_style(status: GitStatus, theme: &Theme) -> Style {
     match status {
@@ -73,8 +76,6 @@ impl FileManager {
         const TIME_COLUMN_WIDTH: usize = 19;
         const SEPARATOR: &str = " │ ";
         const SEPARATOR_WIDTH: usize = 3;
-        const PAD: &str = "                                                                                                                                                                                                        ";
-
         // Determine whether to show extended view with columns
         let show_extended = available_width >= config.extended_view_width;
 
@@ -327,20 +328,21 @@ impl FileManager {
             };
 
             let icon_text = if node.is_dir { "▶ " } else { "" };
-            let dir_slash = if node.is_dir { "/" } else { "" };
-            let display_name = format!("{}{}", dir_slash, node.name);
 
             let mut spans = Vec::new();
             if !prefix.is_empty() {
                 spans.push(Span::styled(prefix.clone(), prefix_style));
             }
             spans.push(Span::styled(icon_text, style));
-            spans.push(Span::styled(display_name, style));
+            if node.is_dir {
+                spans.push(Span::styled("/", style));
+            }
+            spans.push(Span::styled(node.name.as_str(), style));
 
             let text_width: usize = spans.iter().map(|s| s.content.width()).sum();
             let padding_len = content_width.saturating_sub(text_width);
             if padding_len > 0 {
-                spans.push(Span::styled(" ".repeat(padding_len), style));
+                spans.push(Span::styled(&PAD[..padding_len.min(PAD.len())], style));
             }
 
             let y = area.y + vis_idx as u16;
@@ -405,12 +407,14 @@ impl FileManager {
                     buf.set_string(x, y, prefix, prefix_style);
                     x += prefix.width() as u16;
                 }
-                let dir_text = format!("▶ /{}", node.name);
-                buf.set_string(x, y, &dir_text, style);
-                x += dir_text.width() as u16;
+                let dir_prefix = "▶ /";
+                buf.set_string(x, y, dir_prefix, style);
+                x += dir_prefix.width() as u16;
+                buf.set_string(x, y, &node.name, style);
+                x += node.name.width() as u16;
                 let pad = content_width.saturating_sub((x - area.x) as usize);
                 if pad > 0 {
-                    buf.set_string(x, y, " ".repeat(pad), style);
+                    buf.set_string(x, y, &PAD[..pad.min(PAD.len())], style);
                 }
 
                 y += 1;
@@ -437,7 +441,7 @@ impl FileManager {
                     buf.set_string(
                         area.x + path_text.width() as u16,
                         y,
-                        " ".repeat(padding),
+                        &PAD[..padding.min(PAD.len())],
                         path_style,
                     );
                 }
@@ -543,7 +547,12 @@ impl FileManager {
                 let padding = content_width.saturating_sub(text.width());
                 buf.set_string(area.x, y, &text, style);
                 if padding > 0 {
-                    buf.set_string(area.x + text.width() as u16, y, " ".repeat(padding), style);
+                    buf.set_string(
+                        area.x + text.width() as u16,
+                        y,
+                        &PAD[..padding.min(PAD.len())],
+                        style,
+                    );
                 }
                 y += 1;
                 lines_rendered += 1;
