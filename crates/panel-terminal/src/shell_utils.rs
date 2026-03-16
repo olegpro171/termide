@@ -17,10 +17,10 @@ pub struct ShellInfo {
 /// Returns a list of shells with friendly names, ordered by preference.
 pub fn discover_shells() -> Vec<ShellInfo> {
     let mut shells = Vec::new();
-    let mut seen_paths = std::collections::HashSet::new();
 
     #[cfg(windows)]
     {
+        let mut seen_paths = std::collections::HashSet::new();
         // Git Bash at standard install locations
         let git_bash_paths = [
             r"C:\Program Files\Git\bin\bash.exe",
@@ -115,6 +115,33 @@ pub fn discover_shells() -> Vec<ShellInfo> {
 
     #[cfg(not(windows))]
     {
+        // Deduplicate by (canonical path + binary name) so that symlinks
+        // like /bin/bash → /usr/bin/bash collapse, but sh and bash remain
+        // separate even when they share a binary (bash runs in POSIX mode as sh).
+        let mut seen = std::collections::HashSet::new();
+
+        let mut try_add = |shells: &mut Vec<ShellInfo>, path: &str| {
+            let p = std::path::Path::new(path);
+            if !p.exists() {
+                return;
+            }
+            let canon = std::fs::canonicalize(p)
+                .unwrap_or_else(|_| p.to_path_buf())
+                .to_string_lossy()
+                .to_string();
+            let basename = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path)
+                .to_string();
+            if seen.insert((canon, basename)) {
+                shells.push(ShellInfo {
+                    name: shell_display_name(path),
+                    path: path.to_string(),
+                });
+            }
+        };
+
         // Parse /etc/shells for all valid login shells
         if let Ok(content) = std::fs::read_to_string("/etc/shells") {
             for line in content.lines() {
@@ -122,13 +149,7 @@ pub fn discover_shells() -> Vec<ShellInfo> {
                 if line.starts_with('#') || line.is_empty() {
                     continue;
                 }
-                if std::path::Path::new(line).exists() && !seen_contains(&seen_paths, line) {
-                    shells.push(ShellInfo {
-                        name: shell_display_name(line),
-                        path: line.to_string(),
-                    });
-                    seen_paths.insert(line.to_string());
-                }
+                try_add(&mut shells, line);
             }
         }
 
@@ -143,13 +164,7 @@ pub fn discover_shells() -> Vec<ShellInfo> {
             "/bin/sh",
         ];
         for path in extra_paths {
-            if std::path::Path::new(path).exists() && !seen_contains(&seen_paths, path) {
-                shells.push(ShellInfo {
-                    name: shell_display_name(path),
-                    path: path.to_string(),
-                });
-                seen_paths.insert(path.to_string());
-            }
+            try_add(&mut shells, path);
         }
     }
 
@@ -173,6 +188,7 @@ fn shell_display_name(path: &str) -> String {
 }
 
 /// Check if a path is already in the seen set (case-insensitive on Windows).
+#[cfg(windows)]
 fn seen_contains(seen: &std::collections::HashSet<String>, path: &str) -> bool {
     #[cfg(windows)]
     {
