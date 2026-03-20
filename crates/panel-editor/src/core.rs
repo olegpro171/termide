@@ -1245,6 +1245,11 @@ impl Editor {
         } else {
             self.lsp.hover_popup_rect = None;
         }
+
+        // Render color preview popup if active
+        if let Some(ref preview) = self.lsp.color_preview {
+            preview.render(buf, area);
+        }
     }
 
     /// Handle backspace/delete key with selection awareness.

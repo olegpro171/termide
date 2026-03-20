@@ -14,6 +14,8 @@ use lsp_types::{CompletionResponse, Diagnostic, GotoDefinitionResponse, Hover, P
 use ratatui::layout::Rect;
 use termide_lsp::{CompletionTriggerKind, LspManager};
 
+use termide_ui::ColorPreview;
+
 use crate::completion_popup::CompletionPopup;
 use crate::hover_popup::HoverPopup;
 
@@ -107,6 +109,9 @@ pub struct LspState {
 
     /// Last known mouse screen position (for tracking movement)
     pub last_mouse_position: Option<(u16, u16)>,
+
+    /// Active color preview popup (shown while Ctrl+click is held on a hex color)
+    pub color_preview: Option<ColorPreview>,
 }
 
 impl LspState {
@@ -137,6 +142,7 @@ impl LspState {
             hover_timer: None,
             hover_scheduled_position: None,
             last_mouse_position: None,
+            color_preview: None,
         }
     }
 

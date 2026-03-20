@@ -3,6 +3,7 @@
 //! Provides reusable UI widgets and layout utilities.
 
 pub mod click_tracker;
+pub mod color_popup;
 pub mod config;
 pub mod grapheme_utils;
 pub mod path_utils;
@@ -14,6 +15,7 @@ pub mod textarea;
 pub mod viewport;
 
 pub use click_tracker::{ClickTracker, IndexClickTracker, PositionClickTracker};
+pub use color_popup::{extract_hex_color_at_col, ColorPreview};
 pub use path_utils::expand_tilde;
 pub use scrollbar::ScrollBar;
 pub use selection_style::{

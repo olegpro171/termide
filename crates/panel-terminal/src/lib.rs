@@ -41,7 +41,7 @@ use termide_core::{
     SessionPanel, WidthPreference,
 };
 use termide_theme::Theme;
-use termide_ui::ScrollBar;
+use termide_ui::{extract_hex_color_at_col, ColorPreview, ScrollBar};
 
 /// State for terminal text search across scrollback and visible buffer.
 struct TerminalSearchState {
@@ -99,6 +99,8 @@ pub struct Terminal {
     last_mouse_position: Option<(u16, u16)>,
     /// Panel bounds for auto-scroll calculations.
     panel_bounds: Option<Rect>,
+    /// Active color preview popup (shown while Ctrl+click is held on a hex color)
+    color_preview: Option<ColorPreview>,
 }
 
 impl Terminal {
@@ -206,6 +208,7 @@ impl Terminal {
             selection_drag_active: false,
             last_mouse_position: None,
             panel_bounds: None,
+            color_preview: None,
         }
     }
 
@@ -1377,6 +1380,11 @@ impl Panel for Terminal {
         let paragraph = Paragraph::new(lines);
         paragraph.render(area, buf);
 
+        // Render color preview popup if active
+        if let Some(ref preview) = self.color_preview {
+            preview.render(buf, area);
+        }
+
         // Render scrollbar for scrollback history
         let screen = self.read_screen();
         let scrollback_len = screen.scrollback.len();
@@ -1775,6 +1783,29 @@ impl Panel for Terminal {
                     return vec![];
                 }
 
+                // Ctrl+Click: check for hex color first
+                if ctrl_pressed {
+                    let line_text = {
+                        let screen = self.read_screen();
+                        let abs_row = screen.visual_to_absolute(inner_row);
+                        screen
+                            .get_line_by_absolute(abs_row)
+                            .map(|cells| cells.iter().map(|c| c.ch).collect::<String>())
+                            .unwrap_or_default()
+                    };
+                    if let Some((r, g, b, hex)) = extract_hex_color_at_col(&line_text, inner_col) {
+                        self.color_preview = Some(ColorPreview {
+                            r,
+                            g,
+                            b,
+                            hex,
+                            screen_row: mouse.row,
+                            screen_col: mouse.column,
+                        });
+                        return vec![];
+                    }
+                }
+
                 // Ctrl+Click on link - open URL in browser or path in file manager
                 if ctrl_pressed {
                     if let Some((ref link_type, _)) = self.hovered_link {
@@ -1836,6 +1867,9 @@ impl Panel for Terminal {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                // Clear color preview on mouse release
+                self.color_preview = None;
+
                 // End selection drag tracking
                 self.selection_drag_active = false;
                 self.last_mouse_position = None;

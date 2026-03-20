@@ -3562,6 +3562,7 @@ dependencies = [
  "crossterm 0.28.1",
  "dirs",
  "ratatui",
+ "regex",
  "termide-clipboard",
  "termide-config",
  "termide-core",

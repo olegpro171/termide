@@ -11,6 +11,7 @@ use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use termide_buffer::{Cursor, Selection};
 use termide_core::PanelEvent;
+use termide_ui::{extract_hex_color_at_col, ColorPreview};
 
 use crate::rendering::inline_diff;
 use crate::{git, rendering, selection, word_wrap, Editor};
@@ -339,8 +340,27 @@ impl Editor {
     ) -> Vec<PanelEvent> {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Handle Ctrl+Click for go-to-definition
+                // Handle Ctrl+Click
                 if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+                    // Check for hex color under cursor first
+                    if let Some(line) = self.buffer.line(target_line) {
+                        if let Some((r, g, b, hex)) = extract_hex_color_at_col(&line, target_col) {
+                            self.lsp.hover_popup = None;
+                            self.lsp.hover_popup_rect = None;
+                            self.lsp.pending_definition_request = None;
+                            self.lsp.color_preview = Some(ColorPreview {
+                                r,
+                                g,
+                                b,
+                                hex,
+                                screen_row: mouse.row,
+                                screen_col: mouse.column,
+                            });
+                            self.input.click_tracker.skip_next_up = true;
+                            return vec![];
+                        }
+                    }
+
                     // Close any existing popups
                     self.lsp.hover_popup = None;
                     self.lsp.hover_popup_rect = None;
@@ -395,6 +415,9 @@ impl Editor {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                // Always clear color preview on mouse release
+                self.lsp.color_preview = None;
+
                 self.scroll_follows_cursor = true;
 
                 // End selection drag tracking
