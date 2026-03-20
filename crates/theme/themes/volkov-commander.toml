@@ -16,7 +16,7 @@ selected_bg = { rgb = [0, 128, 128] }
 selected_fg = { rgb = [255, 255, 255] }
 
 # Disabled
-disabled = { rgb = [85, 85, 85] }
+disabled = { rgb = [170, 170, 170] }
 
 # Semantic
 success = { rgb = [0, 255, 0] }

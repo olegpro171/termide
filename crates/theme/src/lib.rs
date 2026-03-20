@@ -87,6 +87,15 @@ const THEME_VOLKOV_COMMANDER_TOML: &str = include_str!("../themes/volkov-command
 const THEME_WINDOWS_95_TOML: &str = include_str!("../themes/windows-95.toml");
 const THEME_WINDOWS_98_TOML: &str = include_str!("../themes/windows-98.toml");
 const THEME_WINDOWS_XP_TOML: &str = include_str!("../themes/windows-xp.toml");
+const THEME_AYU_DARK_TOML: &str = include_str!("../themes/ayu-dark.toml");
+const THEME_CATPPUCCIN_MACCHIATO_TOML: &str = include_str!("../themes/catppuccin-macchiato.toml");
+const THEME_EVERFOREST_TOML: &str = include_str!("../themes/everforest.toml");
+const THEME_GITHUB_DARK_TOML: &str = include_str!("../themes/github-dark.toml");
+const THEME_GRUVBOX_TOML: &str = include_str!("../themes/gruvbox.toml");
+const THEME_KANAGAWA_TOML: &str = include_str!("../themes/kanagawa.toml");
+const THEME_MATERIAL_OCEAN_TOML: &str = include_str!("../themes/material-ocean.toml");
+const THEME_ROSEPINE_TOML: &str = include_str!("../themes/rosepine.toml");
+const THEME_TOKYONIGHT_TOML: &str = include_str!("../themes/tokyonight.toml");
 
 // Static theme instances
 static THEME_ATOM_ONE_LIGHT: OnceLock<Theme> = OnceLock::new();
@@ -114,6 +123,15 @@ static THEME_VOLKOV_COMMANDER: OnceLock<Theme> = OnceLock::new();
 static THEME_WINDOWS_95: OnceLock<Theme> = OnceLock::new();
 static THEME_WINDOWS_98: OnceLock<Theme> = OnceLock::new();
 static THEME_WINDOWS_XP: OnceLock<Theme> = OnceLock::new();
+static THEME_AYU_DARK: OnceLock<Theme> = OnceLock::new();
+static THEME_CATPPUCCIN_MACCHIATO: OnceLock<Theme> = OnceLock::new();
+static THEME_EVERFOREST: OnceLock<Theme> = OnceLock::new();
+static THEME_GITHUB_DARK: OnceLock<Theme> = OnceLock::new();
+static THEME_GRUVBOX: OnceLock<Theme> = OnceLock::new();
+static THEME_KANAGAWA: OnceLock<Theme> = OnceLock::new();
+static THEME_MATERIAL_OCEAN: OnceLock<Theme> = OnceLock::new();
+static THEME_ROSEPINE: OnceLock<Theme> = OnceLock::new();
+static THEME_TOKYONIGHT: OnceLock<Theme> = OnceLock::new();
 
 /// Entry in the built-in themes registry.
 /// Single source of truth for all built-in theme configurations.
@@ -133,14 +151,29 @@ static BUILTIN_THEMES: &[BuiltinThemeEntry] = &[
         storage: &THEME_ATOM_ONE_LIGHT,
     },
     BuiltinThemeEntry {
+        name: "ayu-dark",
+        content: THEME_AYU_DARK_TOML,
+        storage: &THEME_AYU_DARK,
+    },
+    BuiltinThemeEntry {
         name: "ayu-light",
         content: THEME_AYU_LIGHT_TOML,
         storage: &THEME_AYU_LIGHT,
     },
     BuiltinThemeEntry {
+        name: "catppuccin-macchiato",
+        content: THEME_CATPPUCCIN_MACCHIATO_TOML,
+        storage: &THEME_CATPPUCCIN_MACCHIATO,
+    },
+    BuiltinThemeEntry {
         name: "dos-navigator",
         content: THEME_DOS_NAVIGATOR_TOML,
         storage: &THEME_DOS_NAVIGATOR,
+    },
+    BuiltinThemeEntry {
+        name: "everforest",
+        content: THEME_EVERFOREST_TOML,
+        storage: &THEME_EVERFOREST,
     },
     BuiltinThemeEntry {
         name: "dracula",
@@ -153,9 +186,24 @@ static BUILTIN_THEMES: &[BuiltinThemeEntry] = &[
         storage: &THEME_FAR_MANAGER,
     },
     BuiltinThemeEntry {
+        name: "github-dark",
+        content: THEME_GITHUB_DARK_TOML,
+        storage: &THEME_GITHUB_DARK,
+    },
+    BuiltinThemeEntry {
         name: "github-light",
         content: THEME_GITHUB_LIGHT_TOML,
         storage: &THEME_GITHUB_LIGHT,
+    },
+    BuiltinThemeEntry {
+        name: "gruvbox",
+        content: THEME_GRUVBOX_TOML,
+        storage: &THEME_GRUVBOX,
+    },
+    BuiltinThemeEntry {
+        name: "kanagawa",
+        content: THEME_KANAGAWA_TOML,
+        storage: &THEME_KANAGAWA,
     },
     BuiltinThemeEntry {
         name: "macos-dark",
@@ -176,6 +224,11 @@ static BUILTIN_THEMES: &[BuiltinThemeEntry] = &[
         name: "material-lighter",
         content: THEME_MATERIAL_LIGHTER_TOML,
         storage: &THEME_MATERIAL_LIGHTER,
+    },
+    BuiltinThemeEntry {
+        name: "material-ocean",
+        content: THEME_MATERIAL_OCEAN_TOML,
+        storage: &THEME_MATERIAL_OCEAN,
     },
     BuiltinThemeEntry {
         name: "matrix",
@@ -208,6 +261,11 @@ static BUILTIN_THEMES: &[BuiltinThemeEntry] = &[
         storage: &THEME_ONEDARK,
     },
     BuiltinThemeEntry {
+        name: "rosepine",
+        content: THEME_ROSEPINE_TOML,
+        storage: &THEME_ROSEPINE,
+    },
+    BuiltinThemeEntry {
         name: "pip-boy",
         content: THEME_PIP_BOY_TOML,
         storage: &THEME_PIP_BOY,
@@ -226,6 +284,11 @@ static BUILTIN_THEMES: &[BuiltinThemeEntry] = &[
         name: "terminal",
         content: THEME_TERMINAL_TOML,
         storage: &THEME_TERMINAL,
+    },
+    BuiltinThemeEntry {
+        name: "tokyonight",
+        content: THEME_TOKYONIGHT_TOML,
+        storage: &THEME_TOKYONIGHT,
     },
     BuiltinThemeEntry {
         name: "terminator",
