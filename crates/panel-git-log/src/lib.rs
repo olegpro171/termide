@@ -685,21 +685,28 @@ impl GitLogPanel {
                 .unwrap_or(0);
             let dropdown_y = content_area.y + 1;
             let max_h = content_area.height.saturating_sub(3);
-            let half = content_area.width / 2;
+            // Use actual branch selector x (set during header render above)
+            let branch_x = self
+                .branch_selector_area
+                .map(|a| a.x)
+                .unwrap_or(content_area.x);
+            let dropdown_w = content_area
+                .width
+                .saturating_sub(branch_x.saturating_sub(content_area.x));
             let visible_count = branches.len().min(max_h as usize);
             self.dropdown_area = Some(Rect {
-                x: content_area.x + half,
+                x: branch_x,
                 y: dropdown_y,
-                width: content_area.width - half,
+                width: dropdown_w,
                 height: visible_count as u16 + 2,
             });
             render_simple_dropdown(
                 &branches,
                 current_branch_idx,
                 self.dropdown_cursor,
-                content_area.x + half,
+                branch_x,
                 dropdown_y,
-                content_area.width - half,
+                dropdown_w,
                 max_h,
                 buf,
                 &theme,
