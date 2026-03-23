@@ -1191,8 +1191,10 @@ impl Panel for FileManager {
     fn handle_key(&mut self, key: KeyEvent) -> Vec<PanelEvent> {
         use keyboard::FmCommand;
 
-        // Translate Cyrillic to Latin for hotkeys
+        // Translate Cyrillic to Latin for hotkeys (Ctrl/Alt+key and special normalization)
         let key = termide_keyboard::translate_hotkey(key);
+        // Also translate bare Cyrillic characters (panel has no text input at this level)
+        let key = termide_keyboard::translate_all_chars(key);
 
         // Parse key event to command
         let command =

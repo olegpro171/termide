@@ -119,6 +119,21 @@ pub fn translate_hotkey(key: KeyEvent) -> KeyEvent {
     key
 }
 
+/// Translate Cyrillic characters to Latin regardless of modifiers.
+///
+/// Use in panel hotkey handlers where all input is treated as commands,
+/// not as text input. This ensures hotkeys like `o`, `d`, `r`, `v` etc.
+/// work correctly when the user's keyboard layout is set to Cyrillic.
+pub fn translate_all_chars(key: KeyEvent) -> KeyEvent {
+    if let KeyCode::Char(ch) = key.code {
+        let translated = cyrillic_to_latin(ch);
+        if translated != ch {
+            return KeyEvent::new(KeyCode::Char(translated), key.modifiers);
+        }
+    }
+    key
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
