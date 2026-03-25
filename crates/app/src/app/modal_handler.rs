@@ -336,6 +336,37 @@ impl App {
                 PendingAction::CommandPalette => {
                     self.handle_command_palette_result(value)?;
                 }
+                // Git stash push: create new stash with user message
+                PendingAction::GitStashPush { repo_path } => {
+                    self.handle_git_stash_push(repo_path, value)?;
+                }
+                // Git stash drop: drop stash after confirmation
+                PendingAction::GitStashDrop { repo_path, index } => {
+                    self.handle_git_stash_drop(repo_path, index, value)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle git stash drop after ConfirmModal confirmation.
+    fn handle_git_stash_drop(
+        &mut self,
+        repo_path: std::path::PathBuf,
+        index: usize,
+        value: Box<dyn std::any::Any>,
+    ) -> Result<()> {
+        if let Some(&confirmed) = value.downcast_ref::<bool>() {
+            if confirmed {
+                match termide_git::stash_drop(&repo_path, index) {
+                    Ok(()) => {
+                        self.state.set_info(format!("Dropped stash@{{{}}}", index));
+                        self.send_git_update(&repo_path);
+                    }
+                    Err(e) => {
+                        self.state.set_error(format!("Stash drop error: {}", e));
+                    }
+                }
             }
         }
         Ok(())
@@ -923,7 +954,7 @@ impl App {
     /// Send git update event to refresh git panels.
     /// Expanded panels get `OnGitUpdate`, collapsed panels get `MarkStale`
     /// (consistent with `poll_watcher_events()`).
-    fn send_git_update(&mut self, repo_path: &std::path::Path) {
+    pub(in crate::app) fn send_git_update(&mut self, repo_path: &std::path::Path) {
         use termide_core::PanelCommand;
         let repo_paths: Vec<&std::path::Path> = vec![repo_path];
         for (panel, is_expanded) in self

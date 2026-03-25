@@ -173,6 +173,28 @@ impl App {
         Ok(())
     }
 
+    /// Handle git stash push: user provided stash message.
+    pub(in crate::app) fn handle_git_stash_push(
+        &mut self,
+        repo_path: std::path::PathBuf,
+        value: Box<dyn std::any::Any>,
+    ) -> Result<()> {
+        let message = match value.downcast_ref::<String>() {
+            Some(s) => s.trim().to_string(),
+            None => return Ok(()),
+        };
+        match termide_git::stash_push(&repo_path, &message) {
+            Ok(()) => {
+                self.state.set_info("Stash created".to_string());
+                self.send_git_update(&repo_path);
+            }
+            Err(e) => {
+                self.state.set_error(format!("Stash push error: {}", e));
+            }
+        }
+        Ok(())
+    }
+
     /// Handle LSP rename symbol: user confirmed new name, send request to LSP.
     pub(in crate::app) fn handle_lsp_rename_symbol(
         &mut self,

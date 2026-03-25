@@ -128,4 +128,16 @@ pub enum PendingAction {
     },
     /// Command palette — user chose a command by index
     CommandPalette,
+    /// Git stash push — create new stash with user-provided message
+    GitStashPush {
+        /// Repository root path
+        repo_path: PathBuf,
+    },
+    /// Git stash drop — drop stash entry after confirmation
+    GitStashDrop {
+        /// Repository root path
+        repo_path: PathBuf,
+        /// Stash index to drop
+        index: usize,
+    },
 }

@@ -60,6 +60,15 @@ pub enum Selection {
     StagedDir(usize),
 }
 
+/// View mode for the Git Status panel
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    /// Normal status view (staged/unstaged files)
+    Status,
+    /// Stash list view
+    Stash,
+}
+
 /// Button in the Git Status panel
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
@@ -74,6 +83,10 @@ pub enum Button {
     Pulling,
     /// Initialize a new git repository
     Init,
+    /// Open stash view — contains the stash count
+    Stash(usize),
+    /// Return from stash view to status view
+    Back,
 }
 
 impl Button {
@@ -94,6 +107,8 @@ impl Button {
                 format!("{} {}", spinner, t.git_pulling())
             }
             Button::Init => t.git_action_init().to_string(),
+            Button::Stash(n) => format!("Stash ({})", n),
+            Button::Back => "Back".to_string(),
         }
     }
 }

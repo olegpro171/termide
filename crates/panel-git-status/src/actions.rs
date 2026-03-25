@@ -306,6 +306,9 @@ impl GitStatusPanel {
             buttons.push(Button::Commit);
         }
 
+        // Stash — always visible (shows count)
+        buttons.push(Button::Stash(self.stash_entries.len()));
+
         buttons
     }
 
@@ -370,6 +373,16 @@ impl GitStatusPanel {
             Button::Pushing | Button::Pulling => {
                 // Click on spinner button cancels the operation
                 vec![PanelEvent::CancelGitOperation]
+            }
+            Button::Stash(_) => {
+                self.view_mode = crate::ViewMode::Stash;
+                self.stash_cursor = 0;
+                self.stash_scroll = 0;
+                vec![]
+            }
+            Button::Back => {
+                self.view_mode = crate::ViewMode::Status;
+                vec![]
             }
             Button::Init => {
                 // Initialize a new git repository in the first initial path
