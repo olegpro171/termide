@@ -817,6 +817,15 @@ impl Editor {
         }
     }
 
+    /// Toggle inline blame annotation for the current file (Alt+B).
+    pub fn toggle_blame(&mut self) {
+        let repo = self.get_or_compute_repo_root().cloned();
+        let file = self.file_path().map(|p| p.to_path_buf());
+        if let (Some(repo), Some(file)) = (repo, file) {
+            self.git.toggle_blame(&repo, &file);
+        }
+    }
+
     /// Check if the file was modified externally (outside of this editor)
     pub fn check_external_modification(&mut self) {
         // Skip check for remote files - temp file changes don't indicate external edits
@@ -1091,6 +1100,9 @@ impl Editor {
             content_width,
             content_height,
         );
+
+        // Blame annotation overlay on the cursor line
+        self.render_blame_annotation(buf, area, content_width, content_height, theme);
     }
 
     /// Convert syntax language name to human-readable display name.
@@ -1115,6 +1127,76 @@ impl Editor {
             "markdown" => "Markdown",
             _ => syntax_name,
         }
+    }
+
+    /// Render inline blame annotation on the cursor line (VS Code style).
+    ///
+    /// Draws dim text after the code content on the active line only.
+    /// Does nothing if blame is disabled, data is not loaded, or there is no room.
+    fn render_blame_annotation(
+        &self,
+        buf: &mut Buffer,
+        area: Rect,
+        content_width: usize,
+        content_height: usize,
+        theme: &Theme,
+    ) {
+        let entry = match self.git.blame_for_line(self.cursor.line) {
+            Some(e) => e,
+            None => return,
+        };
+
+        // Check cursor line is in the visible viewport
+        if self.cursor.line < self.viewport.top_line
+            || self.cursor.line >= self.viewport.top_line + content_height
+        {
+            return;
+        }
+
+        // Compute cursor screen row
+        let cursor_screen_row = if self.config.word_wrap {
+            let top_visual = self
+                .render_cache
+                .get_visual_row_for_line(self.viewport.top_line)
+                .unwrap_or(0);
+            let line_visual = self
+                .render_cache
+                .get_visual_row_for_line(self.cursor.line)
+                .unwrap_or(0);
+            line_visual.saturating_sub(top_visual)
+        } else {
+            self.cursor.line - self.viewport.top_line
+        };
+
+        let line_number_width = rendering::LINE_NUMBER_WIDTH as u16;
+        let content_x = area.x + 1 + line_number_width; // +1 for border
+        let line_y = area.y + 1 + cursor_screen_row as u16; // +1 for border
+
+        // Compute the visual width of the cursor line's content that is visible
+        let line_visual_width: usize = self
+            .buffer
+            .line(self.cursor.line)
+            .map(|l| {
+                use unicode_width::UnicodeWidthChar;
+                l.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>()
+            })
+            .unwrap_or(0);
+        let visible_code_width = line_visual_width
+            .saturating_sub(self.viewport.left_column)
+            .min(content_width);
+        let ann_x = content_x + visible_code_width as u16;
+
+        // Need at least 12 columns for the annotation to be useful
+        let right_edge = area.x + area.width - 1; // -1 for right border
+        let available = right_edge.saturating_sub(ann_x) as usize;
+        if available < 12 {
+            return;
+        }
+
+        let annotation = entry.inline_text();
+        let truncated = termide_git::truncate_right(&annotation, available);
+        let style = ratatui::style::Style::default().fg(theme.disabled);
+        buf.set_string(ann_x, line_y, &truncated, style);
     }
 
     /// Render editor content
@@ -1186,6 +1268,9 @@ impl Editor {
             content_width,
             content_height,
         );
+
+        // Blame annotation overlay on the cursor line
+        self.render_blame_annotation(buf, area, content_width, content_height, theme);
 
         // Render scrollbar on the right border
         if let Some(border_x) = border_right_x {
@@ -1756,6 +1841,11 @@ impl Panel for Editor {
 
         // Keep redrawing while spinner is animating (upload or LSP loading)
         if self.file_state.uploading || self.lsp.server_loading {
+            return vec![PanelEvent::NeedsRedraw];
+        }
+
+        // Check if async blame data arrived
+        if self.git.poll_blame() {
             return vec![PanelEvent::NeedsRedraw];
         }
 

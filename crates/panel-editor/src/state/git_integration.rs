@@ -1,10 +1,10 @@
 //! Git integration state for the editor.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
-use termide_git::{GitDiffAsyncResult, GitDiffCache};
+use termide_git::{BlameEntry, GitDiffAsyncResult, GitDiffCache};
 
 /// Git-related state for the editor.
 pub(crate) struct GitIntegration {
@@ -17,6 +17,12 @@ pub(crate) struct GitIntegration {
     /// Cached git repository root for this file (to avoid repeated filesystem lookups).
     /// None = not cached, Some(None) = no repo, Some(Some(path)) = repo found.
     pub cached_repo_root: Option<Option<PathBuf>>,
+    /// Whether blame annotation is currently enabled.
+    pub blame_enabled: bool,
+    /// Blame data indexed by 0-based line (index 0 = line 1).
+    pub blame_data: Vec<BlameEntry>,
+    /// Receiver for async blame load.
+    blame_rx: Option<Receiver<Vec<BlameEntry>>>,
 }
 
 impl Default for GitIntegration {
@@ -33,6 +39,9 @@ impl GitIntegration {
             update_pending: None,
             diff_receiver: None,
             cached_repo_root: None,
+            blame_enabled: false,
+            blame_data: Vec::new(),
+            blame_rx: None,
         }
     }
 
@@ -66,5 +75,48 @@ impl GitIntegration {
             }
         }
         false
+    }
+
+    /// Toggle blame on/off.  When enabling, starts an async load for the given file.
+    pub fn toggle_blame(&mut self, repo: &Path, file: &Path) {
+        self.blame_enabled = !self.blame_enabled;
+        if self.blame_enabled {
+            self.blame_rx = Some(termide_git::get_blame_async(
+                repo.to_path_buf(),
+                file.to_path_buf(),
+            ));
+        } else {
+            self.blame_data.clear();
+            self.blame_rx = None;
+        }
+    }
+
+    /// Poll the background blame thread.  Returns `true` if new data arrived (triggers redraw).
+    pub fn poll_blame(&mut self) -> bool {
+        let rx = match &self.blame_rx {
+            Some(r) => r,
+            None => return false,
+        };
+        match rx.try_recv() {
+            Ok(data) => {
+                self.blame_data = data;
+                self.blame_rx = None;
+                true
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.blame_rx = None;
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+        }
+    }
+
+    /// Get the blame entry for a 0-based line index (returns `None` if disabled or no data).
+    pub fn blame_for_line(&self, line_idx: usize) -> Option<&BlameEntry> {
+        if self.blame_enabled {
+            self.blame_data.get(line_idx)
+        } else {
+            None
+        }
     }
 }

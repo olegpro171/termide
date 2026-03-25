@@ -117,6 +117,10 @@ pub enum EditorCommand {
     /// Delete last filter character (Backspace when popup open)
     BackspaceCompletion,
 
+    // Git
+    /// Toggle inline blame annotation on the cursor line (Alt+B)
+    ToggleBlame,
+
     // LSP Hover
     /// Show hover documentation (Ctrl+K)
     ShowHover,
@@ -392,6 +396,16 @@ impl EditorCommand {
             KeyModifiers::CONTROL,
         ) {
             return Self::TriggerCompletion;
+        }
+
+        // Toggle blame (configurable, default Alt+B)
+        if matches_binding_or_default(
+            &keybindings.show_blame,
+            &key,
+            KeyCode::Char('b'),
+            KeyModifiers::ALT,
+        ) {
+            return Self::ToggleBlame;
         }
 
         // LSP Hover (configurable, default Ctrl+K)
@@ -855,6 +869,10 @@ impl EditorCommand {
             }
             Self::BackspaceCompletion => {
                 editor.backspace_completion();
+                Ok(())
+            }
+            Self::ToggleBlame => {
+                editor.toggle_blame();
                 Ok(())
             }
             Self::ShowHover => {

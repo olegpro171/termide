@@ -256,6 +256,10 @@ pub struct EditorKeybindings {
     pub goto_definition: Option<KeyBinding>,
     pub find_references: Option<KeyBinding>,
     pub rename_symbol: Option<KeyBinding>,
+
+    // Git
+    /// Toggle inline git blame annotation on cursor line (default: Alt+B)
+    pub show_blame: Option<KeyBinding>,
 }
 
 /// File manager keybindings (file_manager.keybindings section).

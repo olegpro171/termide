@@ -9,6 +9,7 @@ use std::sync::mpsc;
 use std::sync::OnceLock;
 
 // Internal modules
+mod blame;
 pub(crate) mod command;
 mod commits;
 mod files;
@@ -21,6 +22,7 @@ mod utils;
 pub mod diff;
 
 // Re-export from internal modules
+pub use blame::{get_blame_async, BlameEntry};
 pub use commits::{
     get_commit_details, get_commit_diff, get_file_diff, get_file_diff_stats, get_log,
     get_log_with_graph, CommitDetails, CommitInfo, DiffStats,
