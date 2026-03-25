@@ -41,6 +41,7 @@ fn format_age(timestamp: i64) -> String {
         3600..=86399 => format!("{} hours ago", secs / 3600),
         86400..=604799 => format!("{} days ago", secs / 86400),
         604800..=2591999 => format!("{} weeks ago", secs / 604800),
+        2592000..=31535999 => format!("{} months ago", secs / 2592000),
         _ => format!("{} years ago", secs / 31536000),
     }
 }
