@@ -151,12 +151,14 @@ impl UnifiedWatcher {
         path.components().any(|c| c.as_os_str() == ".git")
     }
 
-    /// Check if git path is commit-related (index, HEAD, refs).
+    /// Check if git path is commit-related (index, HEAD, refs, merge/rebase state).
     fn is_commit_related(path: &Path) -> bool {
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name == "index" || name == "HEAD" {
-                return true;
-            }
+        if let Some(
+            "index" | "HEAD" | "MERGE_HEAD" | "FETCH_HEAD" | "REBASE_HEAD" | "CHERRY_PICK_HEAD"
+            | "ORIG_HEAD" | "COMMIT_EDITMSG",
+        ) = path.file_name().and_then(|n| n.to_str())
+        {
+            return true;
         }
         // Also check for refs/* and logs/* changes
         let path_str = path.to_string_lossy();
@@ -164,11 +166,15 @@ impl UnifiedWatcher {
     }
 
     /// Find repository root from a path inside .git directory.
+    /// Canonicalizes the result to match paths stored by panels (resolves symlinks/mounts).
     fn find_repo_root_from_git_path(path: &Path) -> Option<PathBuf> {
         let mut current = path;
         while let Some(parent) = current.parent() {
             if parent.file_name().and_then(|n| n.to_str()) == Some(".git") {
-                return parent.parent().map(|p| p.to_path_buf());
+                let repo_root = parent.parent()?;
+                return Some(
+                    std::fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf()),
+                );
             }
             current = parent;
         }

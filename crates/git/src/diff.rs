@@ -69,7 +69,18 @@ fn load_original_from_head_sync(file_path: &std::path::Path) -> Option<String> {
         .ok()?;
 
     if !output.status.success() {
-        // File not in HEAD (new file)
+        // Check if file is gitignored — no diff coloring for ignored files
+        let ignored = Command::new("git")
+            .args(["check-ignore", "-q"])
+            .arg(file_path)
+            .current_dir(&git_root)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ignored {
+            return None;
+        }
+        // Truly new file (untracked, not ignored) — empty original → all lines Added
         return Some(String::new());
     }
 
@@ -248,8 +259,21 @@ impl GitDiffCache {
             .context("Failed to execute git show")?;
 
         if !output.status.success() {
-            // File might be new (not in HEAD yet)
-            log::debug!("  git show failed - file new or not tracked");
+            // Check if file is gitignored — no diff coloring for ignored files
+            let ignored = Command::new("git")
+                .args(["check-ignore", "-q"])
+                .arg(&self.file_path)
+                .current_dir(&git_root)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ignored {
+                log::debug!("  file is gitignored - skipping diff");
+                self.original_content = None;
+                return Ok(());
+            }
+            // Truly new file (untracked, not ignored)
+            log::debug!("  git show failed - file is new (untracked)");
             self.original_content = Some(String::new());
             return Ok(());
         }
