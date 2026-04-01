@@ -144,5 +144,6 @@ The device name is automatically detected from the filesystem:
 | `Alt+/`           | Open sessions menu                         |
 | `Alt+K`           | Add bookmark                               |
 | `Ctrl+P`          | Open command palette                       |
+| `Ctrl+Shift+P`    | Open command palette (alternative)         |
 | `Alt+1-9`         | Jump to panel by number                    |
 | `Ctrl+Alt+1-9`    | Jump to panel by number (fallback for gnome-terminal / Windows Terminal) |

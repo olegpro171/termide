@@ -398,7 +398,7 @@ pub struct Config {
 
 **Location:** `crates/theme/src/lib.rs`
 
-**Built-in Themes:** 24 themes (Dracula, Nord, Monokai, Matrix, Pip-Boy, etc.)
+**Built-in Themes:** 38 themes (Dracula, Nord, Monokai, Matrix, Pip-Boy, etc.)
 
 **Custom Themes:** Load from `~/.config/termide/themes/*.toml`
 

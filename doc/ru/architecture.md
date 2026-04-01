@@ -398,7 +398,7 @@ pub struct Config {
 
 **Расположение:** `crates/theme/src/lib.rs`
 
-**Встроенные темы:** 24 темы (Dracula, Nord, Monokai, Matrix, Pip-Boy и др.)
+**Встроенные темы:** 38 тем (Dracula, Nord, Monokai, Matrix, Pip-Boy и др.)
 
 **Пользовательские темы:** Загрузка из `~/.config/termide/themes/*.toml`
 

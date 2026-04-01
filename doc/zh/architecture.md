@@ -398,7 +398,7 @@ pub struct Config {
 
 **位置：** `crates/theme/src/lib.rs`
 
-**内置主题：** 24 款主题（Dracula、Nord、Monokai、Matrix、Pip-Boy 等）
+**内置主题：** 38 款主题（Dracula、Nord、Monokai、Matrix、Pip-Boy 等）
 
 **自定义主题：** 从 `~/.config/termide/themes/*.toml` 加载
 
