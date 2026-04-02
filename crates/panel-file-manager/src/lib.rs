@@ -1973,7 +1973,19 @@ impl FileManager {
             FmCommand::GoToPath => {
                 // Open input modal to enter path or URL (supports sftp://, ftp://, etc.)
                 let t = termide_i18n::t();
-                let current_path = self.display_path();
+                // Use directory at cursor position (may differ from panel root in tree view)
+                let current_path = if let Some(te) = self.tree_entry_at(self.selected) {
+                    if te.file_entry.is_dir {
+                        te.full_path.display().to_string()
+                    } else {
+                        te.full_path
+                            .parent()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| self.display_path())
+                    }
+                } else {
+                    self.display_path()
+                };
                 let modal =
                     InputModal::with_default(t.fm_goto_title(), t.fm_goto_prompt(), &current_path);
                 let action = PendingAction::GoToPath {
