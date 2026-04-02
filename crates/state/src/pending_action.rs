@@ -113,6 +113,8 @@ pub enum PendingAction {
         /// Optional batch operation to continue after handling
         batch_operation: Option<Box<BatchOperation>>,
     },
+    /// Change file permissions (Unix chmod)
+    ChangePermissions { file_path: PathBuf },
     /// Follow symlink — navigate to symlink target
     FollowSymlink { target_path: PathBuf },
     /// Resolve a file conflict for an OperationManager operation

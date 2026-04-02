@@ -53,7 +53,9 @@ pub use directory_picker::DirectoryPickerModal;
 pub use directory_switcher::{DirectoryItem, DirectorySwitcherModal};
 pub use editable_select::{EditableSelectModal, SelectOption};
 pub use info::{InfoModal, ModalValue, SegmentStyle, StyledSegment};
-pub use info_action::{ActionButton, InfoActionModal, InfoActionResult};
+pub use info_action::{
+    ActionButton, InfoActionModal, InfoActionResult, PermAccess, PermissionsState,
+};
 pub use input::InputModal;
 pub use progress::ProgressModal;
 pub use rename_pattern::RenamePatternModal;

@@ -254,18 +254,35 @@ impl FileManager {
             };
 
             #[cfg(unix)]
-            let (owner, group) = {
+            let (owner, group, file_mode, perm_access) = {
                 use std::os::unix::fs::MetadataExt;
+                use termide_modal::PermAccess;
+                let euid = unsafe { libc::geteuid() };
+                let file_uid = metadata.uid();
+                let access = if euid == 0 {
+                    PermAccess::Root
+                } else if euid == file_uid {
+                    PermAccess::Owner
+                } else {
+                    PermAccess::ReadOnly
+                };
                 (
-                    utils::get_user_name(metadata.uid()),
+                    utils::get_user_name(file_uid),
                     utils::get_group_name(metadata.gid()),
+                    Some(metadata.mode()),
+                    access,
                 )
             };
 
             #[cfg(not(unix))]
-            let (owner, group) = {
+            let (owner, group, file_mode, perm_access) = {
                 let owner = std::env::var("USERNAME").unwrap_or_else(|_| "owner".to_string());
-                (owner, String::new())
+                (
+                    owner,
+                    String::new(),
+                    None::<u32>,
+                    termide_modal::PermAccess::ReadOnly,
+                )
             };
 
             let modified = metadata
@@ -360,13 +377,24 @@ impl FileManager {
                 }
             }
 
+            // Helper: attach permissions widget to modal if available
+            let attach_permissions =
+                |mut modal: termide_modal::InfoActionModal| -> termide_modal::InfoActionModal {
+                    if let Some(mode) = file_mode {
+                        modal = modal.with_permissions(mode, perm_access);
+                    }
+                    modal
+                };
+
             // If file has git actions, use InfoActionModal with smart buttons
             if let (true, Some(ref status), Some(repo)) = (has_git_actions, &git_status, repo_path)
             {
                 let buttons = Self::build_git_action_buttons(status, is_dir);
                 let selected_button = buttons.len().saturating_sub(1); // Select [Close]
-                let modal = termide_modal::InfoActionModal::new(modal_title, data.clone(), buttons)
-                    .with_selected_button(selected_button);
+                let modal = attach_permissions(
+                    termide_modal::InfoActionModal::new(modal_title, data.clone(), buttons)
+                        .with_selected_button(selected_button),
+                );
                 self.modal_request = Some((
                     PendingAction::GitFileAction {
                         file_path: file_path.clone(),
@@ -383,10 +411,25 @@ impl FileManager {
                     ActionButton::new(t.file_info_follow_symlink(), "follow"),
                     ActionButton::new(t.git_action_close(), "close"),
                 ];
-                let modal = termide_modal::InfoActionModal::new(modal_title, data.clone(), buttons)
-                    .with_selected_button(1); // Select [Close] by default
+                let modal = attach_permissions(
+                    termide_modal::InfoActionModal::new(modal_title, data.clone(), buttons)
+                        .with_selected_button(1),
+                );
                 self.modal_request = Some((
                     PendingAction::FollowSymlink { target_path },
+                    ActiveModal::InfoAction(Box::new(modal)),
+                ));
+            } else if file_mode.is_some() {
+                // Regular file/dir with permissions editor
+                let buttons = vec![ActionButton::new(t.git_action_close(), "close")];
+                let modal = attach_permissions(
+                    termide_modal::InfoActionModal::new(modal_title, data.clone(), buttons)
+                        .with_selected_button(0),
+                );
+                self.modal_request = Some((
+                    PendingAction::ChangePermissions {
+                        file_path: file_path.clone(),
+                    },
                     ActiveModal::InfoAction(Box::new(modal)),
                 ));
             } else {

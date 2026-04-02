@@ -1277,6 +1277,22 @@ impl Translation for RuntimeTranslation {
         self.get_string("file_info_follow_symlink")
     }
 
+    fn perm_permissions(&self) -> &str {
+        self.get_string("perm_permissions")
+    }
+
+    fn perm_owner(&self) -> &str {
+        self.get_string("perm_owner")
+    }
+
+    fn perm_group(&self) -> &str {
+        self.get_string("perm_group")
+    }
+
+    fn perm_others(&self) -> &str {
+        self.get_string("perm_others")
+    }
+
     fn file_type_directory(&self) -> &str {
         self.get_string("file_type_directory")
     }

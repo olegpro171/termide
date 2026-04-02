@@ -402,6 +402,10 @@ pub trait Translation: Send + Sync {
     fn file_info_git_behind(&self, count: usize) -> String;
     fn file_info_git_ignored(&self) -> &str;
     fn file_info_follow_symlink(&self) -> &str;
+    fn perm_permissions(&self) -> &str;
+    fn perm_owner(&self) -> &str;
+    fn perm_group(&self) -> &str;
+    fn perm_others(&self) -> &str;
 
     // File types
     fn file_type_directory(&self) -> &str;

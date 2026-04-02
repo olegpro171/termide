@@ -46,6 +46,30 @@ impl App {
         }
     }
 
+    /// Apply permissions immediately if a toggle just happened in the modal
+    fn try_apply_permissions_live(&mut self) {
+        let mode = if let Some(ActiveModal::InfoAction(modal)) = &mut self.state.active_modal {
+            modal.take_pending_permission_change()
+        } else {
+            return;
+        };
+        let Some(mode) = mode else { return };
+
+        use termide_state::PendingAction;
+        let file_path = match &self.state.pending_action {
+            Some(PendingAction::ChangePermissions { file_path }) => file_path.clone(),
+            Some(PendingAction::GitFileAction {
+                file_path,
+                repo_path,
+                ..
+            }) => repo_path.join(file_path),
+            Some(PendingAction::FollowSymlink { target_path }) => target_path.clone(),
+            _ => return,
+        };
+
+        Self::apply_permissions(&file_path, mode);
+    }
+
     /// Handle keyboard event in modal window
     pub(super) fn handle_modal_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
         // Get mutable reference to active modal window
@@ -119,6 +143,7 @@ impl App {
                 }
             }
         }
+        self.try_apply_permissions_live();
         Ok(())
     }
 
@@ -177,6 +202,7 @@ impl App {
                 }
             }
         }
+        self.try_apply_permissions_live();
         Ok(())
     }
 
@@ -315,6 +341,10 @@ impl App {
                         batch_operation,
                         value,
                     )?;
+                }
+                // Change file permissions
+                PendingAction::ChangePermissions { file_path } => {
+                    self.handle_change_permissions(value, &file_path)?;
                 }
                 // Follow symlink — navigate to target
                 PendingAction::FollowSymlink { target_path } => {
@@ -493,6 +523,37 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Handle change permissions result (close action only, live apply handled separately)
+    fn handle_change_permissions(
+        &mut self,
+        _value: Box<dyn std::any::Any>,
+        _file_path: &std::path::Path,
+    ) -> Result<()> {
+        // Permissions are applied live via try_apply_permissions_live()
+        Ok(())
+    }
+
+    /// Apply Unix permissions to a file
+    fn apply_permissions(file_path: &std::path::Path, mode: u32) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(file_path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(mode);
+                if let Err(e) = std::fs::set_permissions(file_path, perms) {
+                    log::error!("Failed to set permissions on {:?}: {}", file_path, e);
+                } else {
+                    log::info!("Set permissions {:04o} on {:?}", mode, file_path);
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (file_path, mode);
+        }
     }
 
     /// Handle follow symlink action from InfoActionModal
