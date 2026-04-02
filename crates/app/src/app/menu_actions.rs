@@ -17,10 +17,16 @@ use termide_app_core::Panel;
 
 /// Result of generic submenu keyboard navigation.
 enum SubmenuNavAction {
-    /// User pressed Esc/Left — close submenu
+    /// User pressed Esc — close submenu
     Close,
-    /// User pressed Enter/Right — execute selected action
+    /// User pressed Enter — execute selected action
     Execute,
+    /// User pressed Right — open submenu or go to next root menu
+    Right,
+    /// User pressed Left — close nested or go to prev root menu
+    Left,
+    /// User pressed F4 — edit selected item
+    Edit,
     /// Navigation handled (Up/Down) or no-op
     None,
 }
@@ -35,7 +41,8 @@ fn navigate_submenu(
     separators: &[usize],
 ) -> SubmenuNavAction {
     match key.code {
-        KeyCode::Esc | KeyCode::Left => SubmenuNavAction::Close,
+        KeyCode::Esc => SubmenuNavAction::Close,
+        KeyCode::Left => SubmenuNavAction::Left,
         KeyCode::Up => {
             submenu.select_prev(item_count);
             // Skip separators
@@ -52,7 +59,9 @@ fn navigate_submenu(
             }
             SubmenuNavAction::None
         }
-        KeyCode::Right | KeyCode::Enter => SubmenuNavAction::Execute,
+        KeyCode::Enter => SubmenuNavAction::Execute,
+        KeyCode::Right => SubmenuNavAction::Right,
+        KeyCode::F(4) => SubmenuNavAction::Edit,
         _ => SubmenuNavAction::None,
     }
 }
@@ -76,6 +85,20 @@ use termide_ui_render::{
 };
 
 impl App {
+    /// Switch to next root menu item and open its submenu
+    fn switch_to_next_menu(&mut self) -> Result<()> {
+        self.state.ui.close_all_submenus();
+        self.state.next_menu_item(MENU_TOTAL_COUNT);
+        self.execute_menu_action()
+    }
+
+    /// Switch to previous root menu item and open its submenu
+    fn switch_to_prev_menu(&mut self) -> Result<()> {
+        self.state.ui.close_all_submenus();
+        self.state.prev_menu_item(MENU_TOTAL_COUNT);
+        self.execute_menu_action()
+    }
+
     /// Handle keyboard event in menu
     pub(super) fn handle_menu_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
         match key.code {
@@ -84,9 +107,11 @@ impl App {
             }
             KeyCode::Left => {
                 self.state.prev_menu_item(MENU_TOTAL_COUNT);
+                self.execute_menu_action()?;
             }
             KeyCode::Right => {
                 self.state.next_menu_item(MENU_TOTAL_COUNT);
+                self.execute_menu_action()?;
             }
             KeyCode::Enter => {
                 self.execute_menu_action()?;
@@ -330,8 +355,18 @@ impl App {
             OPTIONS_SUBMENU_ITEM_COUNT,
             &[],
         ) {
-            SubmenuNavAction::Close => self.state.close_submenu(),
+            SubmenuNavAction::Close => self.state.close_menu(),
             SubmenuNavAction::Execute => self.execute_submenu_action()?,
+            SubmenuNavAction::Right => {
+                let sel = self.state.ui.options_submenu.selected;
+                if sel == OPTIONS_SUBMENU_THEMES || sel == OPTIONS_SUBMENU_LANGUAGE {
+                    self.execute_submenu_action()?;
+                } else {
+                    self.switch_to_next_menu()?;
+                }
+            }
+            SubmenuNavAction::Left => self.switch_to_prev_menu()?,
+            SubmenuNavAction::Edit => {}
             SubmenuNavAction::None => {}
         }
         Ok(())
@@ -443,6 +478,13 @@ impl App {
                 // Close all menus
                 self.state.close_menu();
             }
+            KeyCode::Right => {
+                // Restore original theme and switch to next root menu
+                if let Some(original_name) = self.state.ui.theme_preview_original.take() {
+                    self.state.theme = Theme::get_by_name(&original_name);
+                }
+                self.switch_to_next_menu()?;
+            }
             _ => {}
         }
         Ok(())
@@ -481,6 +523,13 @@ impl App {
                 }
                 // Close all menus
                 self.state.close_menu();
+            }
+            KeyCode::Right => {
+                // Restore original language and switch to next root menu
+                if let Some(original_lang) = self.state.ui.language_preview_original.take() {
+                    let _ = i18n::set_language(&original_lang);
+                }
+                self.switch_to_next_menu()?;
             }
             _ => {}
         }
@@ -532,8 +581,11 @@ impl App {
             SESSIONS_SUBMENU_ITEM_COUNT,
             &[],
         ) {
-            SubmenuNavAction::Close => self.state.close_sessions_submenu(),
+            SubmenuNavAction::Close => self.state.close_menu(),
             SubmenuNavAction::Execute => self.execute_sessions_submenu_action()?,
+            SubmenuNavAction::Right => self.switch_to_next_menu()?,
+            SubmenuNavAction::Left => self.switch_to_prev_menu()?,
+            SubmenuNavAction::Edit => {}
             SubmenuNavAction::None => {}
         }
         Ok(())
@@ -647,8 +699,18 @@ impl App {
             TOOLS_SUBMENU_ITEM_COUNT,
             &[],
         ) {
-            SubmenuNavAction::Close => self.state.close_tools_submenu(),
+            SubmenuNavAction::Close => self.state.close_menu(),
             SubmenuNavAction::Execute => self.execute_tools_submenu_action()?,
+            SubmenuNavAction::Right => {
+                // Terminal (index 0) has submenu
+                if self.state.ui.tools_submenu.selected == TOOLS_SUBMENU_TERMINAL {
+                    self.execute_tools_submenu_action()?;
+                } else {
+                    self.switch_to_next_menu()?;
+                }
+            }
+            SubmenuNavAction::Left => self.switch_to_prev_menu()?,
+            SubmenuNavAction::Edit => {}
             SubmenuNavAction::None => {}
         }
         Ok(())
@@ -684,6 +746,9 @@ impl App {
                     self.handle_new_terminal_with_shell(Some(&shell_path))?;
                 }
             }
+            SubmenuNavAction::Right => self.switch_to_next_menu()?,
+            SubmenuNavAction::Left => self.state.close_tools_nested_submenu(),
+            SubmenuNavAction::Edit => {}
             SubmenuNavAction::None => {}
         }
         Ok(())
@@ -1061,8 +1126,21 @@ impl App {
         let item_count = 2 + scripts_count;
 
         match navigate_submenu(&key, &mut self.state.ui.scripts_submenu, item_count, &[1]) {
-            SubmenuNavAction::Close => self.state.close_scripts_submenu(),
+            SubmenuNavAction::Close => self.state.close_menu(),
             SubmenuNavAction::Execute => self.execute_scripts_submenu_action()?,
+            SubmenuNavAction::Right => {
+                // Groups have submenu — check if selected is a group
+                let sel = self.state.ui.scripts_submenu.selected;
+                let root_count = registry.as_ref().map(|r| r.root_items.len()).unwrap_or(0);
+                if sel >= 2 + root_count {
+                    // Group item — open nested
+                    self.execute_scripts_submenu_action()?;
+                } else {
+                    self.switch_to_next_menu()?;
+                }
+            }
+            SubmenuNavAction::Left => self.switch_to_prev_menu()?,
+            SubmenuNavAction::Edit => self.edit_selected_script()?,
             SubmenuNavAction::None => {}
         }
         Ok(())
@@ -1130,8 +1208,12 @@ impl App {
             .unwrap_or(0);
 
         match navigate_submenu(&key, &mut self.state.ui.scripts_nested, item_count, &[]) {
-            SubmenuNavAction::Close => self.state.close_scripts_nested_submenu(),
+            SubmenuNavAction::Close | SubmenuNavAction::Left => {
+                self.state.close_scripts_nested_submenu();
+            }
             SubmenuNavAction::Execute => self.execute_scripts_nested_action()?,
+            SubmenuNavAction::Right => self.switch_to_next_menu()?,
+            SubmenuNavAction::Edit => self.edit_selected_nested_script()?,
             SubmenuNavAction::None => {}
         }
         Ok(())
@@ -1162,6 +1244,58 @@ impl App {
         Ok(())
     }
 
+    /// Open selected script in editor (F4 from scripts submenu)
+    fn edit_selected_script(&mut self) -> Result<()> {
+        let selected = self.state.ui.scripts_submenu.selected;
+
+        // Index 0: Manage scripts — open scripts folder
+        if selected == 0 {
+            self.state.close_menu();
+            self.handle_manage_scripts()?;
+            return Ok(());
+        }
+
+        // Index 1: separator, Index 2+: scripts
+        if let Some(registry) = termide_config::scripts::ScriptsRegistry::load() {
+            let adjusted = selected.saturating_sub(2);
+            let root_count = registry.root_items.len();
+            if adjusted < root_count {
+                if let Some(script) = registry.root_items.get(adjusted) {
+                    self.state.close_menu();
+                    let _ = self.open_editor_for_file(script.path.clone());
+                }
+            }
+            // Groups can't be edited directly
+        }
+        Ok(())
+    }
+
+    /// Open selected nested script in editor (F4 from scripts nested submenu)
+    fn edit_selected_nested_script(&mut self) -> Result<()> {
+        let registry = match termide_config::scripts::ScriptsRegistry::load() {
+            Some(r) => r,
+            None => return Ok(()),
+        };
+        let group_name = match &self.state.ui.current_scripts_group {
+            Some(name) => name.clone(),
+            None => return Ok(()),
+        };
+        if let Some(group) = registry.groups.iter().find(|g| g.name == group_name) {
+            if let Some(script) = group.items.get(self.state.ui.scripts_nested.selected) {
+                self.state.close_menu();
+                let _ = self.open_editor_for_file(script.path.clone());
+            }
+        }
+        Ok(())
+    }
+
+    /// Open bookmarks config in editor (F4 from bookmarks submenu)
+    fn edit_bookmarks_config(&mut self) -> Result<()> {
+        self.state.close_menu();
+        self.handle_manage_bookmarks()?;
+        Ok(())
+    }
+
     /// Run a script
     fn run_script(&mut self, script: &termide_config::scripts::ScriptItem) -> Result<()> {
         use termide_panel_terminal::Terminal;
@@ -1174,9 +1308,7 @@ impl App {
         } else if script.is_background {
             // Fire-and-forget spawn (no terminal panel)
             log::info!("Running background script '{}' in {:?}", script.name, cwd);
-            match std::process::Command::new("/bin/sh")
-                .arg("-lc")
-                .arg(shell_quote(&script.path))
+            match shell_command(&script.path)
                 .current_dir(&cwd)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -1232,9 +1364,7 @@ impl App {
 
         log::info!("Running report script '{}' in {:?}", script.name, cwd);
 
-        let child = std::process::Command::new("/bin/sh")
-            .arg("-lc")
-            .arg(shell_quote(&script.path))
+        let child = shell_command(&script.path)
             .current_dir(cwd)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -1309,8 +1439,20 @@ impl App {
         let item_count = get_bookmarks_item_count(&self.state.bookmarks);
 
         match navigate_submenu(&key, &mut self.state.ui.bookmarks_submenu, item_count, &[2]) {
-            SubmenuNavAction::Close => self.state.close_bookmarks_submenu(),
+            SubmenuNavAction::Close => self.state.close_menu(),
             SubmenuNavAction::Execute => self.execute_bookmarks_submenu_action()?,
+            SubmenuNavAction::Right => {
+                // Groups have submenu — check if selected is a group (indices 3..3+groups_count)
+                let sel = self.state.ui.bookmarks_submenu.selected;
+                let groups_count = self.state.bookmarks.named_groups().len();
+                if sel >= 3 && sel < 3 + groups_count {
+                    self.execute_bookmarks_submenu_action()?;
+                } else {
+                    self.switch_to_next_menu()?;
+                }
+            }
+            SubmenuNavAction::Left => self.switch_to_prev_menu()?,
+            SubmenuNavAction::Edit => self.edit_bookmarks_config()?,
             SubmenuNavAction::None => {}
         }
         Ok(())
@@ -1384,8 +1526,12 @@ impl App {
             .unwrap_or(0);
 
         match navigate_submenu(&key, &mut self.state.ui.bookmarks_nested, item_count, &[]) {
-            SubmenuNavAction::Close => self.state.close_bookmarks_nested_submenu(),
+            SubmenuNavAction::Close | SubmenuNavAction::Left => {
+                self.state.close_bookmarks_nested_submenu();
+            }
             SubmenuNavAction::Execute => self.execute_bookmarks_nested_action()?,
+            SubmenuNavAction::Right => self.switch_to_next_menu()?,
+            SubmenuNavAction::Edit => self.edit_bookmarks_config()?,
             SubmenuNavAction::None => {}
         }
         Ok(())
@@ -1802,8 +1948,34 @@ impl App {
 }
 
 /// Shell-quote a path for safe use in terminal commands.
-/// Wraps in single quotes and escapes embedded single quotes.
+#[cfg(unix)]
 fn shell_quote(path: &std::path::Path) -> String {
     let s = path.to_string_lossy();
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+#[cfg(not(unix))]
+fn shell_quote(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    format!("\"{}\"", s.replace('"', "\\\""))
+}
+
+/// Create a Command that runs a script through the user's shell.
+/// Inherits the current process environment (important for nix develop, direnv, etc.).
+/// On Unix: $SHELL -c 'script_path'
+/// On Windows: cmd.exe /C "script_path"
+fn shell_command(script_path: &std::path::Path) -> std::process::Command {
+    #[cfg(unix)]
+    {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let mut cmd = std::process::Command::new(shell);
+        cmd.arg("-c").arg(shell_quote(script_path));
+        cmd
+    }
+    #[cfg(not(unix))]
+    {
+        let mut cmd = std::process::Command::new("cmd.exe");
+        cmd.arg("/C").arg(shell_quote(script_path));
+        cmd
+    }
 }

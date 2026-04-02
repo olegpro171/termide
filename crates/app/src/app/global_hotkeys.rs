@@ -44,7 +44,12 @@ impl App {
         match action {
             // Menu
             HotkeyAction::ToggleMenu => {
-                self.state.toggle_menu();
+                if self.state.ui.menu_open {
+                    self.state.close_menu();
+                } else {
+                    self.state.open_menu(Some(0));
+                    self.execute_menu_action()?;
+                }
             }
 
             // Panel creation
