@@ -141,6 +141,8 @@ pub enum HotkeyAction {
     OpenGitLog,
     /// Open command palette
     OpenCommandPalette,
+    /// Create new session
+    NewSession,
 }
 
 impl HotkeyAction {
@@ -200,7 +202,8 @@ impl HotkeyAction {
             | HotkeyAction::MoveToFirst
             | HotkeyAction::MoveToLast
             | HotkeyAction::ResizePanel(_)
-            | HotkeyAction::OpenCommandPalette => None,
+            | HotkeyAction::OpenCommandPalette
+            | HotkeyAction::NewSession => None,
         }
     }
 }
@@ -613,6 +616,11 @@ impl DefaultHotkeyProcessor {
             &mut processor,
             &config.open_git_log,
             HotkeyAction::OpenGitLog,
+        );
+        add_binding(
+            &mut processor,
+            &config.new_session,
+            HotkeyAction::NewSession,
         );
 
         // Panel management

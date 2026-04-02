@@ -557,7 +557,7 @@ impl App {
     }
 
     /// Open directory picker for creating new session
-    fn handle_new_session(&mut self) -> Result<()> {
+    pub(super) fn handle_new_session(&mut self) -> Result<()> {
         use termide_modal::DirectoryPickerModal;
 
         let t = i18n::t();

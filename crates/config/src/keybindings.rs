@@ -181,6 +181,7 @@ pub struct GlobalKeybindings {
     pub open_help: Option<KeyBinding>,
     pub open_preferences: Option<KeyBinding>,
     pub open_sessions: Option<KeyBinding>,
+    pub new_session: Option<KeyBinding>,
     pub open_git_status: Option<KeyBinding>,
     pub open_directory_switcher: Option<KeyBinding>,
     pub open_bookmark_add: Option<KeyBinding>,
@@ -350,6 +351,7 @@ impl GlobalKeybindings {
         set_default!(open_help, "Alt+H");
         set_default!(open_preferences, "Alt+P");
         set_default!(open_sessions, "Alt+/");
+        set_default!(new_session, "Alt+N");
         set_default!(open_git_status, "Alt+G");
         set_default!(open_bookmark_add, "Alt+K");
         set_default!(open_outline, "Alt+O");

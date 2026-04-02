@@ -14,7 +14,6 @@ use ratatui::{
 };
 
 use crate::base::render_modal_block;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use unicode_width::UnicodeWidthStr;
 
@@ -40,7 +39,6 @@ pub struct DirectoryPickerModal {
     entries: Vec<DirEntry>,
     visible_indices: Vec<usize>,
     tree_prefixes: Vec<String>,
-    expanded_dirs: HashSet<PathBuf>,
     /// Cursor position (index into visible_indices)
     cursor: usize,
     scroll_offset: usize,
@@ -65,7 +63,6 @@ impl DirectoryPickerModal {
             entries: Vec::new(),
             visible_indices: Vec::new(),
             tree_prefixes: Vec::new(),
-            expanded_dirs: HashSet::new(),
             cursor: 0,
             scroll_offset: 0,
             button_focused: false,
@@ -161,7 +158,6 @@ impl DirectoryPickerModal {
         let depth = self.entries[tree_idx].depth;
 
         self.entries[tree_idx].expanded = Some(true);
-        self.expanded_dirs.insert(dir_path.clone());
 
         // Check if children already loaded
         let has_children = self
@@ -186,7 +182,6 @@ impl DirectoryPickerModal {
         }
 
         self.entries[tree_idx].expanded = Some(false);
-        self.expanded_dirs.remove(&self.entries[tree_idx].full_path);
         self.recompute_visible();
     }
 
@@ -287,7 +282,6 @@ impl DirectoryPickerModal {
     fn go_parent(&mut self) {
         if let Some(parent) = self.current_dir.parent() {
             self.current_dir = parent.to_path_buf();
-            self.expanded_dirs.clear();
             self.load_root();
         }
     }
@@ -512,7 +506,6 @@ impl Modal for DirectoryPickerModal {
                         } else {
                             // Navigate into: make selected dir the new root
                             self.current_dir = self.entries[tree_idx].full_path.clone();
-                            self.expanded_dirs.clear();
                             self.load_root();
                         }
                     }

@@ -142,6 +142,7 @@ The device name is automatically detected from the filesystem:
 | `Alt+Minus (-)`   | Decrease active group width                |
 | `Alt+Backspace`   | Toggle panel stacking (merge/unstack)      |
 | `Alt+/`           | Open sessions menu                         |
+| `Alt+N`           | Create new session                         |
 | `Alt+K`           | Add bookmark                               |
 | `Ctrl+P`          | Open command palette                       |
 | `Ctrl+Shift+P`    | Open command palette (alternative)         |
