@@ -410,13 +410,27 @@ impl DefaultHotkeyProcessor {
             HotkeyAction::OpenGitStatus,
         );
 
-        // Bookmark Add (Alt+K)
+        // Bookmark Add (Alt+B primary, Ctrl+Alt+B fallback)
         bindings.insert(
-            KeyBinding::alt(KeyCode::Char('k')),
+            KeyBinding::alt(KeyCode::Char('b')),
             HotkeyAction::OpenBookmarkAdd,
         );
         bindings.insert(
-            KeyBinding::alt(KeyCode::Char('K')),
+            KeyBinding::alt(KeyCode::Char('B')),
+            HotkeyAction::OpenBookmarkAdd,
+        );
+        bindings.insert(
+            KeyBinding::new(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
+            HotkeyAction::OpenBookmarkAdd,
+        );
+        bindings.insert(
+            KeyBinding::new(
+                KeyCode::Char('B'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
             HotkeyAction::OpenBookmarkAdd,
         );
 

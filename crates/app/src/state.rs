@@ -245,6 +245,10 @@ pub struct AppState {
     pub all_diagnostics: HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
     /// User bookmarks
     pub bookmarks: BookmarksConfig,
+    /// Project-local bookmarks from `.termide/bookmarks.toml` (read-only overlay)
+    pub project_bookmarks: Option<BookmarksConfig>,
+    /// Project root path (for loading project-local .termide/ configs)
+    pub project_root: PathBuf,
     /// Unified operation manager for file operations (copy, move, delete, upload, download).
     /// This is the new centralized system that will eventually replace the individual
     /// operation handles (local_copy_operation, batch_download_operation, etc.).
@@ -346,6 +350,8 @@ impl AppState {
             lsp_manager,
             all_diagnostics: HashMap::new(),
             bookmarks,
+            project_bookmarks: None,
+            project_root: std::env::current_dir().unwrap_or_default(),
             operation_manager: None, // Will be initialized when VfsManager is available
             active_operation_id: None,
             last_operation_paused: false,
@@ -642,15 +648,17 @@ impl AppState {
     }
 
     /// Open bookmarks nested submenu (for a group)
-    pub fn open_bookmarks_nested_submenu(&mut self, group_name: String) {
+    pub fn open_bookmarks_nested_submenu(&mut self, group_name: String, is_project: bool) {
         self.ui.bookmarks_nested.open();
         self.ui.current_bookmarks_group = Some(group_name);
+        self.ui.current_bookmarks_group_is_project = is_project;
     }
 
     /// Close bookmarks nested submenu
     pub fn close_bookmarks_nested_submenu(&mut self) {
         self.ui.bookmarks_nested.close();
         self.ui.current_bookmarks_group = None;
+        self.ui.current_bookmarks_group_is_project = false;
     }
 
     // ========================================================================

@@ -67,6 +67,33 @@ pub enum PendingAction {
     NewSession,
     /// Delete session (with confirmation)
     DeleteSession { path: PathBuf },
+    /// Delete bookmark (with confirmation)
+    DeleteBookmark {
+        path: String,
+        is_project: bool,
+        /// Group name to restore nested menu after deletion
+        group: Option<String>,
+        /// Selected index in parent bookmarks submenu to restore on return
+        selected: usize,
+    },
+    /// Edit an existing bookmark (replace old with new)
+    EditBookmark {
+        original_path: String,
+        /// Original group of the bookmark being edited (for precise removal)
+        original_group: Option<String>,
+        was_project: bool,
+        /// Group name to restore nested menu on return
+        group: Option<String>,
+        is_project: bool,
+        selected: usize,
+    },
+    /// Delete all bookmarks in a group (with confirmation)
+    DeleteBookmarkGroup {
+        group: String,
+        is_project: bool,
+        /// Selected index in parent bookmarks submenu to restore on return
+        selected: usize,
+    },
     /// Change root path of current session
     ChangeRootPath,
     /// Open Git Status panel
@@ -99,7 +126,12 @@ pub enum PendingAction {
     /// Switch active panel's working directory
     SwitchDirectory,
     /// Add a bookmark
-    AddBookmark,
+    AddBookmark {
+        /// Group name to restore nested menu on return
+        group: Option<String>,
+        is_project: bool,
+        selected: usize,
+    },
     /// Go to path/URL (supports local paths and remote URLs like sftp://)
     GoToPath { current_directory: PathBuf },
     /// VFS information message (connection cancelled, error, etc.)

@@ -24,6 +24,8 @@ pub struct ScriptItem {
     pub is_background: bool,
     /// Whether this script shows result in modal (contains `.report.` in filename).
     pub is_report: bool,
+    /// Whether this script comes from a project-local `.termide/scripts/` directory.
+    pub is_project: bool,
 }
 
 /// A group of scripts (subdirectory).
@@ -33,6 +35,8 @@ pub struct ScriptGroup {
     pub name: String,
     /// Scripts in this group.
     pub items: Vec<ScriptItem>,
+    /// Whether this group comes from a project-local `.termide/scripts/` directory.
+    pub is_project: bool,
 }
 
 /// Registry of all available scripts.
@@ -67,28 +71,32 @@ impl ScriptItem {
             path,
             is_background,
             is_report,
+            is_project: false,
         })
     }
 }
 
 impl ScriptsRegistry {
-    /// Load scripts from the scripts directory.
+    /// Load scripts from the global scripts directory.
     ///
     /// Returns None if the directory doesn't exist or can't be read.
     /// Returns empty registry if directory exists but is empty.
     pub fn load() -> Option<Self> {
         let scripts_dir = get_data_dir().ok()?.join("scripts");
+        Self::load_from_dir(&scripts_dir)
+    }
 
+    /// Load scripts from a specific directory.
+    pub fn load_from_dir(scripts_dir: &Path) -> Option<Self> {
         if !scripts_dir.exists() {
             return Some(Self::default());
         }
 
-        // Canonicalize the scripts directory for symlink validation
-        let canonical_scripts_dir = std::fs::canonicalize(&scripts_dir).ok()?;
+        let canonical_scripts_dir = std::fs::canonicalize(scripts_dir).ok()?;
 
         let mut registry = Self::default();
 
-        let entries = std::fs::read_dir(&scripts_dir).ok()?;
+        let entries = std::fs::read_dir(scripts_dir).ok()?;
 
         for entry in entries.flatten() {
             let path = entry.path();
@@ -125,6 +133,36 @@ impl ScriptsRegistry {
         Some(registry)
     }
 
+    /// Load and merge scripts from global and project-local directories.
+    /// Project items appear first and are marked with `is_project = true`.
+    pub fn load_merged(project_root: Option<&Path>) -> Option<Self> {
+        let mut registry = Self::load().unwrap_or_default();
+
+        if let Some(root) = project_root {
+            let project_scripts_dir = root.join(".termide").join("scripts");
+            if project_scripts_dir.exists() {
+                if let Some(mut project) = Self::load_from_dir(&project_scripts_dir) {
+                    // Mark all project items
+                    for item in &mut project.root_items {
+                        item.is_project = true;
+                    }
+                    for group in &mut project.groups {
+                        group.is_project = true;
+                        for item in &mut group.items {
+                            item.is_project = true;
+                        }
+                    }
+                    // Prepend project items before global
+                    project.root_items.append(&mut registry.root_items);
+                    project.groups.append(&mut registry.groups);
+                    registry = project;
+                }
+            }
+        }
+
+        Some(registry)
+    }
+
     /// Load a group of scripts from a subdirectory.
     fn load_group(dir: &PathBuf, canonical_scripts_dir: &std::path::Path) -> Option<ScriptGroup> {
         let name = dir.file_name()?.to_str()?.to_string();
@@ -157,7 +195,11 @@ impl ScriptsRegistry {
 
         items.sort_by(|a, b| a.name.cmp(&b.name));
 
-        Some(ScriptGroup { name, items })
+        Some(ScriptGroup {
+            name,
+            items,
+            is_project: false,
+        })
     }
 
     /// Check if a file is executable (has execute permission on Unix).

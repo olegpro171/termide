@@ -34,14 +34,17 @@ pub struct BookmarkAddResult {
     pub description: Option<String>,
     /// Optional group
     pub group: Option<String>,
+    /// Whether to save as project-local bookmark (.termide/)
+    pub is_project: bool,
 }
 
 /// Focus area in the modal
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FocusArea {
-    Path,
-    Description,
     Group,
+    Description,
+    Path,
+    ProjectCheckbox,
     Buttons,
 }
 
@@ -51,11 +54,13 @@ pub struct BookmarkAddModal {
     path_input: TextInputHandler,
     description_input: TextInputHandler,
     group_suggestion: SuggestionInput,
+    project_checked: bool,
     focus: FocusArea,
     selected_button: usize, // 0 = Add, 1 = Cancel
     last_buttons_area: Option<Rect>,
     last_group_field_area: Option<Rect>,
     last_group_dropdown_area: Option<Rect>,
+    last_checkbox_area: Option<Rect>,
 }
 
 impl BookmarkAddModal {
@@ -67,12 +72,33 @@ impl BookmarkAddModal {
             path_input: TextInputHandler::with_default(path),
             description_input: TextInputHandler::new(),
             group_suggestion: SuggestionInput::new(existing_groups),
-            focus: FocusArea::Path,
+            project_checked: false,
+            focus: FocusArea::Group,
             selected_button: 0,
             last_buttons_area: None,
             last_group_field_area: None,
             last_group_dropdown_area: None,
+            last_checkbox_area: None,
         }
+    }
+
+    /// Pre-fill all fields for editing an existing bookmark
+    pub fn with_values(
+        mut self,
+        path: &str,
+        description: Option<&str>,
+        group: Option<&str>,
+        is_project: bool,
+    ) -> Self {
+        self.path_input = TextInputHandler::with_default(path.to_string());
+        if let Some(desc) = description {
+            self.description_input = TextInputHandler::with_default(desc.to_string());
+        }
+        if let Some(grp) = group {
+            self.group_suggestion.set_text(grp);
+        }
+        self.project_checked = is_project;
+        self
     }
 
     /// Calculate dynamic modal dimensions
@@ -100,15 +126,14 @@ impl BookmarkAddModal {
             .min(screen_width);
 
         // Calculate height
-        // Border(1) + Path(3) + Description(3) + Group(3) + [Dropdown] + Buttons(1) + Border(1)
-        // Dropdown: items + 1 (bottom border only, top is shared with input)
+        // Border(1) + Group(3) + [Dropdown] + Description(3) + Path(3) + Checkbox(2) + Buttons(1) + Border(1)
         let suggestions = self.group_suggestion.suggestions();
         let dropdown_height = if self.group_suggestion.is_expanded() && !suggestions.is_empty() {
             suggestions.len().min(5) as u16 + 1
         } else {
             0
         };
-        let height = (1 + 3 + 3 + 3 + dropdown_height + 1 + 1).min(screen_height);
+        let height = (1 + 3 + dropdown_height + 3 + 3 + 2 + 1 + 1).min(screen_height);
 
         (width, height)
     }
@@ -118,19 +143,19 @@ impl BookmarkAddModal {
         match self.focus {
             FocusArea::Path => Some(&mut self.path_input),
             FocusArea::Description => Some(&mut self.description_input),
-            FocusArea::Group | FocusArea::Buttons => None,
+            FocusArea::Group | FocusArea::ProjectCheckbox | FocusArea::Buttons => None,
         }
     }
 
     /// Move to next focus area
     fn next_focus(&mut self) {
         self.focus = match self.focus {
-            FocusArea::Path => FocusArea::Description,
-            FocusArea::Description => FocusArea::Group,
-            FocusArea::Group => FocusArea::Buttons,
-            FocusArea::Buttons => FocusArea::Path,
+            FocusArea::Group => FocusArea::Description,
+            FocusArea::Description => FocusArea::Path,
+            FocusArea::Path => FocusArea::ProjectCheckbox,
+            FocusArea::ProjectCheckbox => FocusArea::Buttons,
+            FocusArea::Buttons => FocusArea::Group,
         };
-        // Close dropdown when leaving group
         if self.focus != FocusArea::Group {
             self.group_suggestion.collapse();
         }
@@ -139,12 +164,12 @@ impl BookmarkAddModal {
     /// Move to previous focus area
     fn prev_focus(&mut self) {
         self.focus = match self.focus {
-            FocusArea::Path => FocusArea::Buttons,
-            FocusArea::Description => FocusArea::Path,
-            FocusArea::Group => FocusArea::Description,
-            FocusArea::Buttons => FocusArea::Group,
+            FocusArea::Group => FocusArea::Buttons,
+            FocusArea::Description => FocusArea::Group,
+            FocusArea::Path => FocusArea::Description,
+            FocusArea::ProjectCheckbox => FocusArea::Path,
+            FocusArea::Buttons => FocusArea::ProjectCheckbox,
         };
-        // Close dropdown when leaving group
         if self.focus != FocusArea::Group {
             self.group_suggestion.collapse();
         }
@@ -302,7 +327,6 @@ impl Modal for BookmarkAddModal {
         let inner = render_modal_block(modal_area, buf, t.bookmarks_add_title(), theme);
 
         // Calculate layout
-        // Dropdown: items + 1 (bottom border only, top is shared with input)
         let suggestions = self.group_suggestion.suggestions();
         let dropdown_height = if self.group_suggestion.is_expanded() && !suggestions.is_empty() {
             suggestions.len().min(5) as u16 + 1
@@ -311,14 +335,18 @@ impl Modal for BookmarkAddModal {
         };
 
         let mut constraints = vec![
-            Constraint::Length(3), // Path
-            Constraint::Length(3), // Description
             Constraint::Length(3), // Group
         ];
         if dropdown_height > 0 {
             constraints.push(Constraint::Length(dropdown_height));
         }
-        constraints.push(Constraint::Length(1)); // Buttons
+        constraints.extend([
+            Constraint::Length(3), // Description
+            Constraint::Length(3), // Path
+            Constraint::Length(1), // Checkbox
+            Constraint::Length(1), // Empty line
+            Constraint::Length(1), // Buttons
+        ]);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -327,31 +355,8 @@ impl Modal for BookmarkAddModal {
 
         let mut chunk_idx = 0;
 
-        // Render Path field
-        self.render_labeled_input_field(
-            buf,
-            chunks[chunk_idx],
-            t.bookmarks_add_path(),
-            &self.path_input,
-            self.focus == FocusArea::Path,
-            theme,
-        );
-        chunk_idx += 1;
-
-        // Render Description field
-        self.render_labeled_input_field(
-            buf,
-            chunks[chunk_idx],
-            t.bookmarks_add_description(),
-            &self.description_input,
-            self.focus == FocusArea::Description,
-            theme,
-        );
-        chunk_idx += 1;
-
         // Render Group field with dropdown indicator
         self.render_group_field(buf, chunks[chunk_idx], t.bookmarks_add_group(), theme);
-        // Save group field area for mouse handling (need the input part, not label)
         let group_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(15), Constraint::Min(1)])
@@ -359,15 +364,13 @@ impl Modal for BookmarkAddModal {
         self.last_group_field_area = Some(group_chunks[1]);
         chunk_idx += 1;
 
-        // Render group dropdown if visible (visually connected to input field)
+        // Render group dropdown if visible
         if dropdown_height > 0 {
-            // Split dropdown area same as input field to align borders
             let dropdown_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(15), Constraint::Min(1)])
                 .split(chunks[chunk_idx]);
 
-            // Save dropdown area for mouse handling
             self.last_group_dropdown_area = Some(dropdown_chunks[1]);
 
             let selected_idx = self.group_suggestion.selected_index();
@@ -400,11 +403,56 @@ impl Modal for BookmarkAddModal {
                         .border_style(Style::default().fg(theme.accented_fg)),
                 )
                 .style(Style::default().bg(theme.bg));
-            list.render(dropdown_chunks[1], buf); // Render in right chunk (after label)
+            list.render(dropdown_chunks[1], buf);
             chunk_idx += 1;
         } else {
             self.last_group_dropdown_area = None;
         }
+
+        // Render Description field
+        self.render_labeled_input_field(
+            buf,
+            chunks[chunk_idx],
+            t.bookmarks_add_description(),
+            &self.description_input,
+            self.focus == FocusArea::Description,
+            theme,
+        );
+        chunk_idx += 1;
+
+        // Render Path field
+        self.render_labeled_input_field(
+            buf,
+            chunks[chunk_idx],
+            t.bookmarks_add_path(),
+            &self.path_input,
+            self.focus == FocusArea::Path,
+            theme,
+        );
+        chunk_idx += 1;
+
+        // Render project checkbox (aligned with input fields)
+        {
+            let cb_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(15), Constraint::Min(1)])
+                .split(chunks[chunk_idx]);
+
+            let checkbox_char = if self.project_checked { "x" } else { " " };
+            let checkbox_style = if self.focus == FocusArea::ProjectCheckbox {
+                Style::default().fg(theme.accented_fg)
+            } else {
+                Style::default().fg(theme.fg)
+            };
+            let checkbox_text = format!(" [{}] Project bookmark", checkbox_char);
+            let checkbox = Paragraph::new(checkbox_text).style(checkbox_style);
+            checkbox.render(cb_chunks[1], buf);
+            self.last_checkbox_area = Some(cb_chunks[1]);
+            chunk_idx += 1;
+        }
+
+        // Skip empty line
+        chunk_idx += 1;
 
         // Render buttons
         let add_style = button_style(
@@ -522,6 +570,21 @@ impl Modal for BookmarkAddModal {
                 }
                 Ok(None)
             }
+            FocusArea::ProjectCheckbox => {
+                match key.code {
+                    KeyCode::Char(' ') => {
+                        self.project_checked = !self.project_checked;
+                    }
+                    KeyCode::Down | KeyCode::Enter => {
+                        self.next_focus();
+                    }
+                    KeyCode::Up => {
+                        self.prev_focus();
+                    }
+                    _ => {}
+                }
+                Ok(None)
+            }
             FocusArea::Buttons => {
                 // Handle text input keys even when on buttons
                 match handle_input_key(&mut self.path_input, key) {
@@ -573,6 +636,7 @@ impl Modal for BookmarkAddModal {
                                 path,
                                 description,
                                 group,
+                                is_project: self.project_checked,
                             })));
                         } else {
                             // Cancel button
@@ -629,6 +693,19 @@ impl Modal for BookmarkAddModal {
                 if item_index < suggestions_len {
                     self.group_suggestion.select_and_confirm(item_index);
                 }
+                return Ok(None);
+            }
+        }
+
+        // Check if click is on project checkbox
+        if let Some(checkbox_area) = self.last_checkbox_area {
+            if mouse.row >= checkbox_area.y
+                && mouse.row < checkbox_area.y + checkbox_area.height
+                && mouse.column >= checkbox_area.x
+                && mouse.column < checkbox_area.x + checkbox_area.width
+            {
+                self.focus = FocusArea::ProjectCheckbox;
+                self.project_checked = !self.project_checked;
                 return Ok(None);
             }
         }
@@ -692,6 +769,7 @@ impl Modal for BookmarkAddModal {
                 path,
                 description,
                 group,
+                is_project: self.project_checked,
             })))
         } else if mouse.column >= cancel_start && mouse.column < cancel_end {
             // Cancel button clicked
@@ -717,7 +795,7 @@ impl Modal for BookmarkAddModal {
                 self.group_suggestion.input_mut().paste(text);
                 true
             }
-            FocusArea::Buttons => false,
+            FocusArea::ProjectCheckbox | FocusArea::Buttons => false,
         }
     }
 }

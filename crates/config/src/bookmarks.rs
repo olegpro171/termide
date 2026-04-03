@@ -30,6 +30,9 @@ pub struct Bookmark {
     /// Optional group name (if None, goes to "Ungrouped")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    /// Whether this bookmark comes from a project-local `.termide/bookmarks.toml`.
+    #[serde(skip)]
+    pub is_project: bool,
 }
 
 /// Type of bookmark based on path analysis.
@@ -58,6 +61,21 @@ pub enum BookmarkType {
 }
 
 impl BookmarkType {
+    /// Get icon for this bookmark type.
+    #[must_use]
+    pub fn icon(&self) -> &'static str {
+        match self {
+            BookmarkType::Directory => "📁",
+            BookmarkType::TextFile => "📄",
+            BookmarkType::ViewerFile => "🖼",
+            BookmarkType::HttpLink => "🌐",
+            BookmarkType::SshConnection => "🔑",
+            BookmarkType::SftpPath | BookmarkType::FtpPath => "📡",
+            BookmarkType::SmbPath | BookmarkType::NfsPath => "🖧",
+            BookmarkType::Unknown => "📌",
+        }
+    }
+
     /// Check if this bookmark type is a remote/network path.
     #[must_use]
     pub fn is_remote(&self) -> bool {
@@ -94,6 +112,7 @@ impl Bookmark {
             created_at: Utc::now(),
             description: None,
             group: None,
+            is_project: false,
         }
     }
 
@@ -214,6 +233,21 @@ impl BookmarksConfig {
         }
     }
 
+    /// Load bookmarks from a project-local `.termide/bookmarks.toml`.
+    /// All loaded bookmarks are marked with `is_project = true`.
+    pub fn load_from_project(project_root: &Path) -> Option<Self> {
+        let path = project_root.join(".termide").join("bookmarks.toml");
+        if !path.exists() {
+            return None;
+        }
+        let content = std::fs::read_to_string(&path).ok()?;
+        let mut config: Self = toml::from_str(&content).ok()?;
+        for bookmark in &mut config.bookmarks {
+            bookmark.is_project = true;
+        }
+        Some(config)
+    }
+
     /// Load bookmarks from the default data directory.
     pub fn load() -> Self {
         match get_data_dir() {
@@ -249,9 +283,20 @@ impl BookmarksConfig {
         }
     }
 
-    /// Remove a bookmark by path.
+    /// Remove a bookmark by path (removes all with this path).
     pub fn remove(&mut self, path: &str) {
         self.bookmarks.retain(|b| b.path != path);
+    }
+
+    /// Remove a bookmark by path and group.
+    pub fn remove_in_group(&mut self, path: &str, group: Option<&str>) {
+        self.bookmarks
+            .retain(|b| !(b.path == path && b.group.as_deref() == group));
+    }
+
+    /// Remove all bookmarks in a group.
+    pub fn remove_group(&mut self, group: &str) {
+        self.bookmarks.retain(|b| b.group_name() != group);
     }
 
     /// Check if a bookmark exists for the given path.
@@ -262,6 +307,13 @@ impl BookmarksConfig {
     /// Find a bookmark by path.
     pub fn find(&self, path: &str) -> Option<&Bookmark> {
         self.bookmarks.iter().find(|b| b.path == path)
+    }
+
+    /// Find a bookmark by path and group.
+    pub fn find_in_group(&self, path: &str, group: Option<&str>) -> Option<&Bookmark> {
+        self.bookmarks
+            .iter()
+            .find(|b| b.path == path && b.group.as_deref() == group)
     }
 
     /// Find a mutable bookmark by path.

@@ -1075,21 +1075,11 @@ impl App {
                         self.handle_manage_scripts()?;
                     }
                     3 => {
-                        // Manage bookmarks
-                        self.state.close_menu();
-                        self.handle_manage_bookmarks()?;
-                    }
-                    4 => {
-                        // Edit preferences
-                        self.state.close_menu();
-                        self.open_config_in_editor()?;
-                    }
-                    5 => {
                         // Help
                         self.state.close_menu();
                         self.handle_new_help()?;
                     }
-                    6 => {
+                    4 => {
                         // Quit
                         self.state.close_menu();
                         if self.has_panels_requiring_confirmation() {
@@ -1185,13 +1175,14 @@ impl App {
     /// Handle click on Scripts submenu dropdown
     /// Returns true if click was handled
     fn handle_scripts_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
-        let registry = match termide_config::scripts::ScriptsRegistry::load() {
-            Some(r) => r,
-            None => {
-                self.state.close_menu();
-                return Ok(true);
-            }
-        };
+        let registry =
+            match termide_config::scripts::ScriptsRegistry::load_merged(Some(&self.project_root)) {
+                Some(r) => r,
+                None => {
+                    self.state.close_menu();
+                    return Ok(true);
+                }
+            };
 
         // If nested submenu is open, handle clicks on it first
         if self.state.ui.scripts_nested.open {
@@ -1234,12 +1225,18 @@ impl App {
     /// Handle click on Bookmarks submenu dropdown
     /// Returns true if click was handled
     fn handle_bookmarks_submenu_click(&mut self, x: u16, y: u16) -> Result<bool> {
-        let bookmarks_items = get_bookmarks_items(&self.state.bookmarks);
+        let bookmarks_items =
+            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
 
         // If nested submenu is open, handle clicks on it first
         if self.state.ui.bookmarks_nested.open {
             if let Some(group_name) = self.state.ui.current_bookmarks_group.as_ref() {
-                let nested_items = get_bookmarks_group_items(&self.state.bookmarks, group_name);
+                let nested_items = get_bookmarks_group_items(
+                    &self.state.bookmarks,
+                    self.state.project_bookmarks.as_ref(),
+                    group_name,
+                    self.state.ui.current_bookmarks_group_is_project,
+                );
                 if !nested_items.is_empty() {
                     let menu_x = get_menu_item_x_position(BOOKMARKS_MENU_INDEX);
                     let parent_width = bookmarks_items

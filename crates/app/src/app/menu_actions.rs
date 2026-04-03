@@ -32,6 +32,8 @@ enum SubmenuNavAction {
     Left,
     /// User pressed F4 — edit selected item
     Edit,
+    /// User pressed Delete — delete selected item
+    Delete,
     /// Navigation handled (Up/Down) or no-op
     None,
 }
@@ -49,24 +51,28 @@ fn navigate_submenu(
         KeyCode::Esc => SubmenuNavAction::Close,
         KeyCode::Left => SubmenuNavAction::Left,
         KeyCode::Up => {
-            submenu.select_prev(item_count);
-            // Skip separators
-            if separators.contains(&submenu.selected) {
+            // Skip all consecutive separators
+            for _ in 0..item_count {
                 submenu.select_prev(item_count);
+                if !separators.contains(&submenu.selected) {
+                    break;
+                }
             }
             SubmenuNavAction::None
         }
         KeyCode::Down => {
-            submenu.select_next(item_count);
-            // Skip separators
-            if separators.contains(&submenu.selected) {
+            for _ in 0..item_count {
                 submenu.select_next(item_count);
+                if !separators.contains(&submenu.selected) {
+                    break;
+                }
             }
             SubmenuNavAction::None
         }
         KeyCode::Enter => SubmenuNavAction::Execute,
         KeyCode::Right => SubmenuNavAction::Right,
         KeyCode::F(4) => SubmenuNavAction::Edit,
+        KeyCode::Delete => SubmenuNavAction::Delete,
         _ => SubmenuNavAction::None,
     }
 }
@@ -408,8 +414,7 @@ impl App {
                 }
             }
             SubmenuNavAction::Left => self.switch_to_prev_menu()?,
-            SubmenuNavAction::Edit => {}
-            SubmenuNavAction::None => {}
+            SubmenuNavAction::Edit | SubmenuNavAction::Delete | SubmenuNavAction::None => {}
         }
         Ok(())
     }
@@ -627,8 +632,7 @@ impl App {
             SubmenuNavAction::Execute => self.execute_sessions_submenu_action()?,
             SubmenuNavAction::Right => self.switch_to_next_menu()?,
             SubmenuNavAction::Left => self.switch_to_prev_menu()?,
-            SubmenuNavAction::Edit => {}
-            SubmenuNavAction::None => {}
+            SubmenuNavAction::Edit | SubmenuNavAction::Delete | SubmenuNavAction::None => {}
         }
         Ok(())
     }
@@ -752,8 +756,7 @@ impl App {
                 }
             }
             SubmenuNavAction::Left => self.switch_to_prev_menu()?,
-            SubmenuNavAction::Edit => {}
-            SubmenuNavAction::None => {}
+            SubmenuNavAction::Edit | SubmenuNavAction::Delete | SubmenuNavAction::None => {}
         }
         Ok(())
     }
@@ -790,8 +793,7 @@ impl App {
             }
             SubmenuNavAction::Right => self.switch_to_next_menu()?,
             SubmenuNavAction::Left => self.state.close_tools_nested_submenu(),
-            SubmenuNavAction::Edit => {}
-            SubmenuNavAction::None => {}
+            SubmenuNavAction::Edit | SubmenuNavAction::Delete | SubmenuNavAction::None => {}
         }
         Ok(())
     }
@@ -1152,7 +1154,8 @@ impl App {
             return self.handle_scripts_nested_submenu_key(key);
         }
 
-        let registry = termide_config::scripts::ScriptsRegistry::load();
+        let registry =
+            termide_config::scripts::ScriptsRegistry::load_merged(Some(&self.project_root));
         // 2 = "Manage scripts" + separator; then scripts or "Add script..."
         let scripts_count = registry
             .as_ref()
@@ -1171,11 +1174,16 @@ impl App {
             SubmenuNavAction::Close => self.state.close_menu(),
             SubmenuNavAction::Execute => self.execute_scripts_submenu_action()?,
             SubmenuNavAction::Right => {
-                // Groups have submenu — check if selected is a group
                 let sel = self.state.ui.scripts_submenu.selected;
-                let root_count = registry.as_ref().map(|r| r.root_items.len()).unwrap_or(0);
-                if sel >= 2 + root_count {
-                    // Group item — open nested
+                let has_sub = registry
+                    .as_ref()
+                    .map(|r| {
+                        use termide_ui_render::get_scripts_items;
+                        get_scripts_items(r)
+                    })
+                    .and_then(|items| items.get(sel).map(|i| i.has_submenu))
+                    .unwrap_or(false);
+                if has_sub {
                     self.execute_scripts_submenu_action()?;
                 } else {
                     self.switch_to_next_menu()?;
@@ -1183,7 +1191,7 @@ impl App {
             }
             SubmenuNavAction::Left => self.switch_to_prev_menu()?,
             SubmenuNavAction::Edit => self.edit_selected_script()?,
-            SubmenuNavAction::None => {}
+            SubmenuNavAction::Delete | SubmenuNavAction::None => {}
         }
         Ok(())
     }
@@ -1202,10 +1210,11 @@ impl App {
         // Index 1: separator (should not be reachable)
         // Indices 2+: actual scripts
 
-        let registry = match termide_config::scripts::ScriptsRegistry::load() {
-            Some(r) => r,
-            None => return Ok(()),
-        };
+        let registry =
+            match termide_config::scripts::ScriptsRegistry::load_merged(Some(&self.project_root)) {
+                Some(r) => r,
+                None => return Ok(()),
+            };
 
         // Check if "Add script..." is shown (empty registry)
         if registry.root_items.is_empty() && registry.groups.is_empty() {
@@ -1236,7 +1245,8 @@ impl App {
 
     /// Handle keyboard event in Scripts nested submenu (group items)
     fn handle_scripts_nested_submenu_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
-        let registry = termide_config::scripts::ScriptsRegistry::load();
+        let registry =
+            termide_config::scripts::ScriptsRegistry::load_merged(Some(&self.project_root));
         let group_name = self.state.ui.current_scripts_group.clone();
 
         let item_count = registry
@@ -1256,17 +1266,18 @@ impl App {
             SubmenuNavAction::Execute => self.execute_scripts_nested_action()?,
             SubmenuNavAction::Right => self.switch_to_next_menu()?,
             SubmenuNavAction::Edit => self.edit_selected_nested_script()?,
-            SubmenuNavAction::None => {}
+            SubmenuNavAction::Delete | SubmenuNavAction::None => {}
         }
         Ok(())
     }
 
     /// Execute action for selected item in Scripts nested submenu
     pub(super) fn execute_scripts_nested_action(&mut self) -> Result<()> {
-        let registry = match termide_config::scripts::ScriptsRegistry::load() {
-            Some(r) => r,
-            None => return Ok(()),
-        };
+        let registry =
+            match termide_config::scripts::ScriptsRegistry::load_merged(Some(&self.project_root)) {
+                Some(r) => r,
+                None => return Ok(()),
+            };
 
         let group_name = match &self.state.ui.current_scripts_group {
             Some(name) => name.clone(),
@@ -1298,7 +1309,9 @@ impl App {
         }
 
         // Index 1: separator, Index 2+: scripts
-        if let Some(registry) = termide_config::scripts::ScriptsRegistry::load() {
+        if let Some(registry) =
+            termide_config::scripts::ScriptsRegistry::load_merged(Some(&self.project_root))
+        {
             let adjusted = selected.saturating_sub(2);
             let root_count = registry.root_items.len();
             if adjusted < root_count {
@@ -1314,10 +1327,11 @@ impl App {
 
     /// Open selected nested script in editor (F4 from scripts nested submenu)
     fn edit_selected_nested_script(&mut self) -> Result<()> {
-        let registry = match termide_config::scripts::ScriptsRegistry::load() {
-            Some(r) => r,
-            None => return Ok(()),
-        };
+        let registry =
+            match termide_config::scripts::ScriptsRegistry::load_merged(Some(&self.project_root)) {
+                Some(r) => r,
+                None => return Ok(()),
+            };
         let group_name = match &self.state.ui.current_scripts_group {
             Some(name) => name.clone(),
             None => return Ok(()),
@@ -1328,13 +1342,6 @@ impl App {
                 let _ = self.open_editor_for_file(script.path.clone());
             }
         }
-        Ok(())
-    }
-
-    /// Open bookmarks config in editor (F4 from bookmarks submenu)
-    fn edit_bookmarks_config(&mut self) -> Result<()> {
-        self.state.close_menu();
-        self.handle_manage_bookmarks()?;
         Ok(())
     }
 
@@ -1477,25 +1484,42 @@ impl App {
             return self.handle_bookmarks_nested_submenu_key(key);
         }
 
-        use termide_ui_render::get_bookmarks_item_count;
-        let item_count = get_bookmarks_item_count(&self.state.bookmarks);
+        use termide_ui_render::get_bookmarks_items;
+        let items =
+            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+        let item_count = items.len();
+        let separators: Vec<usize> = items
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.is_separator)
+            .map(|(idx, _)| idx)
+            .collect();
 
-        match navigate_submenu(&key, &mut self.state.ui.bookmarks_submenu, item_count, &[2]) {
+        match navigate_submenu(
+            &key,
+            &mut self.state.ui.bookmarks_submenu,
+            item_count,
+            &separators,
+        ) {
             SubmenuNavAction::Close => self.state.close_menu(),
             SubmenuNavAction::Execute => self.execute_bookmarks_submenu_action()?,
             SubmenuNavAction::Right => {
-                // Groups have submenu — check if selected is a group (indices 3..3+groups_count)
+                use termide_ui_render::get_bookmarks_items;
+                let items = get_bookmarks_items(
+                    &self.state.bookmarks,
+                    self.state.project_bookmarks.as_ref(),
+                );
                 let sel = self.state.ui.bookmarks_submenu.selected;
-                let groups_count = self.state.bookmarks.named_groups().len();
-                if sel >= 3 && sel < 3 + groups_count {
+                if items.get(sel).is_some_and(|i| i.has_submenu) {
                     self.execute_bookmarks_submenu_action()?;
                 } else {
                     self.switch_to_next_menu()?;
                 }
             }
             SubmenuNavAction::Left => self.switch_to_prev_menu()?,
-            SubmenuNavAction::Edit => self.edit_bookmarks_config()?,
+            SubmenuNavAction::Edit => self.edit_selected_bookmark()?,
             SubmenuNavAction::None => {}
+            SubmenuNavAction::Delete => self.delete_selected_bookmark()?,
         }
         Ok(())
     }
@@ -1511,40 +1535,29 @@ impl App {
             return Ok(());
         }
 
-        if selected == 1 {
-            // Manage bookmarks
-            self.state.close_menu();
-            self.handle_manage_bookmarks()?;
-            return Ok(());
-        }
+        // Index 1: separator (should not be reachable)
+        // Indices 2+: actual bookmarks
 
-        // Index 2: separator (should not be reachable)
-        // Indices 3+: actual bookmarks
+        // Build the same item list as the dropdown to match indices
+        use termide_ui_render::get_bookmarks_items;
+        let items =
+            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
 
-        // Get groups and ungrouped counts
-        let named_groups: Vec<String> = self
-            .state
-            .bookmarks
-            .named_groups()
-            .keys()
-            .cloned()
-            .collect();
-        let ungrouped = self.state.bookmarks.ungrouped();
-        let groups_start = 3; // after add + manage + separator
-        let ungrouped_start = groups_start + named_groups.len();
-
-        if selected >= groups_start && selected < ungrouped_start {
-            // Group selected - open nested submenu
-            let group_idx = selected - groups_start;
-            if let Some(group_name) = named_groups.get(group_idx) {
-                self.state.open_bookmarks_nested_submenu(group_name.clone());
+        if let Some(item) = items.get(selected) {
+            if item.is_separator || item.key.is_empty() {
+                return Ok(());
             }
-        } else if selected >= ungrouped_start {
-            // Ungrouped bookmark selected - open directly
-            let ungrouped_idx = selected - ungrouped_start;
-            if let Some(bookmark) = ungrouped.get(ungrouped_idx) {
-                let path = bookmark.path.clone();
-                let bookmark_type = bookmark.bookmark_type();
+            if item.has_submenu {
+                // Group — open nested submenu
+                self.state
+                    .open_bookmarks_nested_submenu(item.key.clone(), item.is_project);
+            } else {
+                // Direct bookmark — open it
+                let path = item.key.clone();
+                let bookmark_type = self
+                    .find_bookmark(&path)
+                    .map(|b| b.bookmark_type())
+                    .unwrap_or(termide_config::BookmarkType::Unknown);
                 self.state.close_menu();
                 self.open_bookmark(&path, bookmark_type)?;
             }
@@ -1562,9 +1575,18 @@ impl App {
 
         let group_name = self.state.ui.current_bookmarks_group.clone();
 
+        let is_project = self.state.ui.current_bookmarks_group_is_project;
         let item_count = group_name
             .as_ref()
-            .map(|name| get_bookmarks_group_items(&self.state.bookmarks, name).len())
+            .map(|name| {
+                get_bookmarks_group_items(
+                    &self.state.bookmarks,
+                    self.state.project_bookmarks.as_ref(),
+                    name,
+                    is_project,
+                )
+                .len()
+            })
             .unwrap_or(0);
 
         match navigate_submenu(&key, &mut self.state.ui.bookmarks_nested, item_count, &[]) {
@@ -1573,28 +1595,36 @@ impl App {
             }
             SubmenuNavAction::Execute => self.execute_bookmarks_nested_action()?,
             SubmenuNavAction::Right => self.switch_to_next_menu()?,
-            SubmenuNavAction::Edit => self.edit_bookmarks_config()?,
+            SubmenuNavAction::Edit => self.edit_selected_nested_bookmark()?,
             SubmenuNavAction::None => {}
+            SubmenuNavAction::Delete => self.delete_selected_nested_bookmark()?,
         }
         Ok(())
     }
 
     /// Execute action for selected item in Bookmarks nested submenu
     pub(super) fn execute_bookmarks_nested_action(&mut self) -> Result<()> {
+        use termide_ui_render::get_bookmarks_group_items;
+
         let group_name = match &self.state.ui.current_bookmarks_group {
             Some(name) => name.clone(),
             None => return Ok(()),
         };
 
-        let grouped = self.state.bookmarks.grouped();
-        let group_bookmarks = match grouped.get(&group_name) {
-            Some(bookmarks) => bookmarks,
-            None => return Ok(()),
-        };
+        let is_project = self.state.ui.current_bookmarks_group_is_project;
+        let items = get_bookmarks_group_items(
+            &self.state.bookmarks,
+            self.state.project_bookmarks.as_ref(),
+            &group_name,
+            is_project,
+        );
 
-        if let Some(bookmark) = group_bookmarks.get(self.state.ui.bookmarks_nested.selected) {
-            let path = bookmark.path.clone();
-            let bookmark_type = bookmark.bookmark_type();
+        if let Some(item) = items.get(self.state.ui.bookmarks_nested.selected) {
+            let path = item.key.clone();
+            let bookmark_type = self
+                .find_bookmark(&path)
+                .map(|b| b.bookmark_type())
+                .unwrap_or(termide_config::BookmarkType::Unknown);
             self.state.close_menu();
             self.open_bookmark(&path, bookmark_type)?;
         }
@@ -1602,19 +1632,167 @@ impl App {
         Ok(())
     }
 
+    /// Edit selected bookmark from main bookmarks submenu (F4)
+    fn edit_selected_bookmark(&mut self) -> Result<()> {
+        use termide_ui_render::get_bookmarks_items;
+        let items =
+            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+        let sel = self.state.ui.bookmarks_submenu.selected;
+        self.open_edit_bookmark_modal(items.get(sel))
+    }
+
+    /// Edit selected bookmark from nested bookmarks submenu (F4)
+    fn edit_selected_nested_bookmark(&mut self) -> Result<()> {
+        use termide_ui_render::get_bookmarks_group_items;
+        let group_name = match &self.state.ui.current_bookmarks_group {
+            Some(name) => name.clone(),
+            None => return Ok(()),
+        };
+        let is_project = self.state.ui.current_bookmarks_group_is_project;
+        let items = get_bookmarks_group_items(
+            &self.state.bookmarks,
+            self.state.project_bookmarks.as_ref(),
+            &group_name,
+            is_project,
+        );
+        let sel = self.state.ui.bookmarks_nested.selected;
+        self.open_edit_bookmark_modal(items.get(sel))
+    }
+
+    /// Open the bookmark add modal pre-filled with existing bookmark data for editing
+    fn open_edit_bookmark_modal(
+        &mut self,
+        item: Option<&termide_ui_render::DropdownItem>,
+    ) -> Result<()> {
+        use termide_modal::BookmarkAddModal;
+        let Some(item) = item else { return Ok(()) };
+        if item.is_separator || item.has_submenu || item.key.is_empty() {
+            return Ok(());
+        }
+
+        let path = &item.key;
+        // Use the current nested group context to find the correct bookmark
+        // (same path can exist in different groups)
+        let current_group = self.state.ui.current_bookmarks_group.as_deref();
+        let bookmark = self.find_bookmark_in_group(path, current_group, item.is_project);
+        let description = bookmark.and_then(|b| b.description.as_deref());
+        let group = bookmark.and_then(|b| b.group.as_deref());
+
+        let all_groups = self.all_bookmark_group_names();
+
+        let modal = BookmarkAddModal::new(None, all_groups).with_values(
+            path,
+            description,
+            group,
+            item.is_project,
+        );
+
+        let selected = self.state.ui.bookmarks_submenu.selected;
+        let group = self.state.ui.current_bookmarks_group.clone();
+
+        let original_group = bookmark.and_then(|b| b.group.clone());
+        self.state.close_menu();
+        self.state.set_pending_action(
+            PendingAction::EditBookmark {
+                original_path: path.clone(),
+                original_group,
+                was_project: item.is_project,
+                group,
+                is_project: item.is_project,
+                selected,
+            },
+            ActiveModal::BookmarkAdd(Box::new(modal)),
+        );
+        Ok(())
+    }
+
+    /// Delete selected bookmark from main bookmarks submenu
+    fn delete_selected_bookmark(&mut self) -> Result<()> {
+        use termide_ui_render::get_bookmarks_items;
+        let items =
+            get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+        let sel = self.state.ui.bookmarks_submenu.selected;
+        self.confirm_delete_bookmark_item(items.get(sel), None, sel)
+    }
+
+    /// Delete selected bookmark from nested bookmarks submenu (group items)
+    fn delete_selected_nested_bookmark(&mut self) -> Result<()> {
+        use termide_ui_render::get_bookmarks_group_items;
+        let group_name = match &self.state.ui.current_bookmarks_group {
+            Some(name) => name.clone(),
+            None => return Ok(()),
+        };
+        let is_project = self.state.ui.current_bookmarks_group_is_project;
+        let items = get_bookmarks_group_items(
+            &self.state.bookmarks,
+            self.state.project_bookmarks.as_ref(),
+            &group_name,
+            is_project,
+        );
+        let parent_sel = self.state.ui.bookmarks_submenu.selected;
+        let sel = self.state.ui.bookmarks_nested.selected;
+        self.confirm_delete_bookmark_item(items.get(sel), Some(group_name), parent_sel)
+    }
+
+    /// Open a confirmation modal to delete a bookmark item or group
+    fn confirm_delete_bookmark_item(
+        &mut self,
+        item: Option<&termide_ui_render::DropdownItem>,
+        group: Option<String>,
+        selected: usize,
+    ) -> Result<()> {
+        use termide_modal::ConfirmModal;
+        let Some(item) = item else { return Ok(()) };
+        if item.is_separator || item.key.is_empty() {
+            return Ok(());
+        }
+
+        let (action, modal) = if item.has_submenu {
+            let group_name = &item.key;
+            (
+                PendingAction::DeleteBookmarkGroup {
+                    group: group_name.clone(),
+                    is_project: item.is_project,
+                    selected,
+                },
+                ConfirmModal::new("Delete bookmark group?", group_name.to_string()),
+            )
+        } else {
+            (
+                PendingAction::DeleteBookmark {
+                    path: item.key.clone(),
+                    is_project: item.is_project,
+                    group,
+                    selected,
+                },
+                ConfirmModal::new("Delete bookmark?", item.label.to_string()),
+            )
+        };
+
+        self.state.close_menu();
+        self.state
+            .set_pending_action(action, ActiveModal::Confirm(Box::new(modal)));
+        Ok(())
+    }
+
     /// Handle adding a bookmark
     pub(super) fn handle_add_bookmark(&mut self) -> Result<()> {
         use termide_modal::BookmarkAddModal;
 
-        // Get current path from active panel
-        let current_path = self.get_current_bookmark_path();
+        let selected = self.state.ui.bookmarks_submenu.selected;
+        let group = self.state.ui.current_bookmarks_group.clone();
+        let is_project = self.state.ui.current_bookmarks_group_is_project;
 
-        // Get existing group names for autocomplete
-        let existing_groups = self.state.bookmarks.group_names();
+        let current_path = self.get_current_bookmark_path();
+        let existing_groups = self.all_bookmark_group_names();
 
         let modal = BookmarkAddModal::new(current_path, existing_groups);
         self.state.set_pending_action(
-            PendingAction::AddBookmark,
+            PendingAction::AddBookmark {
+                group,
+                is_project,
+                selected,
+            },
             ActiveModal::BookmarkAdd(Box::new(modal)),
         );
 
@@ -1638,43 +1816,74 @@ impl App {
         None
     }
 
-    /// Handle managing bookmarks - open bookmarks.toml in editor
-    pub(super) fn handle_manage_bookmarks(&mut self) -> Result<()> {
-        use termide_config::BookmarksConfig;
+    /// Reopen bookmarks menu after modal (delete confirmation/cancel).
+    /// If `group` is Some, also opens the nested submenu for that group
+    /// and sets the parent cursor to the group's position.
+    pub(super) fn reopen_bookmarks_menu(
+        &mut self,
+        group: Option<String>,
+        is_project: bool,
+        fallback_selected: usize,
+    ) {
+        use termide_ui_render::{get_bookmarks_items, menu::BOOKMARKS_MENU_INDEX};
+        self.state.ui.menu_open = true;
+        self.state.ui.selected_menu_item = Some(BOOKMARKS_MENU_INDEX);
+        self.state.open_bookmarks_submenu();
 
-        self.close_help_panels();
+        if let Some(group_name) = group {
+            // Find the group's index in the current items list
+            let items =
+                get_bookmarks_items(&self.state.bookmarks, self.state.project_bookmarks.as_ref());
+            let group_idx = items
+                .iter()
+                .position(|i| i.has_submenu && i.key == group_name && i.is_project == is_project)
+                .unwrap_or(fallback_selected);
+            self.state.ui.bookmarks_submenu.selected = group_idx;
+            self.state
+                .open_bookmarks_nested_submenu(group_name, is_project);
+        } else {
+            self.state.ui.bookmarks_submenu.selected = fallback_selected;
+        }
+    }
 
-        // Get the bookmarks file path
-        let bookmarks_path = match BookmarksConfig::config_file_path() {
-            Ok(path) => {
-                // Create the file if it doesn't exist
-                if !path.exists() {
-                    // Ensure parent directory exists
-                    if let Some(parent) = path.parent() {
-                        if !parent.exists() {
-                            if let Err(e) = std::fs::create_dir_all(parent) {
-                                log::warn!("Failed to create data directory: {}", e);
-                            }
-                        }
-                    }
-                    // Create empty bookmarks file
-                    let empty_config = BookmarksConfig::default();
-                    if let Err(e) = empty_config.save() {
-                        log::warn!("Failed to create bookmarks file: {}", e);
-                    }
+    /// Get deduplicated, sorted list of all group names from global and project bookmarks.
+    fn all_bookmark_group_names(&self) -> Vec<String> {
+        let mut groups = self.state.bookmarks.group_names();
+        if let Some(ref proj) = self.state.project_bookmarks {
+            for g in proj.group_names() {
+                if !groups.contains(&g) {
+                    groups.push(g);
                 }
-                path
             }
-            Err(e) => {
-                log::warn!("Failed to get bookmarks path: {}", e);
-                self.state
-                    .set_error(format!("Failed to get bookmarks path: {}", e));
-                return Ok(());
-            }
-        };
+        }
+        groups.sort();
+        groups
+    }
 
-        let _ = self.open_editor_for_file(bookmarks_path);
-        Ok(())
+    /// Find a bookmark by path in project or global bookmarks.
+    fn find_bookmark(&self, path: &str) -> Option<&termide_config::Bookmark> {
+        self.state
+            .project_bookmarks
+            .as_ref()
+            .and_then(|p| p.find(path))
+            .or_else(|| self.state.bookmarks.find(path))
+    }
+
+    /// Find a bookmark by path and group in project or global bookmarks.
+    fn find_bookmark_in_group(
+        &self,
+        path: &str,
+        group: Option<&str>,
+        is_project: bool,
+    ) -> Option<&termide_config::Bookmark> {
+        if is_project {
+            self.state
+                .project_bookmarks
+                .as_ref()
+                .and_then(|p| p.find_in_group(path, group))
+        } else {
+            self.state.bookmarks.find_in_group(path, group)
+        }
     }
 
     /// Open a bookmark based on its type

@@ -96,7 +96,9 @@ fn render_dropdowns_and_modals(frame: &mut Frame, state: &mut AppState) {
         && state.ui.scripts_submenu.open
     {
         // Load scripts registry
-        if let Some(registry) = termide_config::scripts::ScriptsRegistry::load() {
+        if let Some(registry) =
+            termide_config::scripts::ScriptsRegistry::load_merged(Some(&state.project_root))
+        {
             let menu_x = get_menu_item_x_position(SCRIPTS_MENU_INDEX);
             let dropdown_y = 1_u16; // Below menu bar
 
@@ -144,7 +146,8 @@ fn render_dropdowns_and_modals(frame: &mut Frame, state: &mut AppState) {
         let dropdown_y = 1_u16; // Below menu bar
 
         // Render Bookmarks submenu
-        let bookmarks_items = get_bookmarks_items(&state.bookmarks);
+        let bookmarks_items =
+            get_bookmarks_items(&state.bookmarks, state.project_bookmarks.as_ref());
         let dropdown = Dropdown::new(
             &bookmarks_items,
             state.ui.bookmarks_submenu.selected,
@@ -157,7 +160,12 @@ fn render_dropdowns_and_modals(frame: &mut Frame, state: &mut AppState) {
         // If a group is selected and nested submenu is open
         if state.ui.bookmarks_nested.open {
             if let Some(group_name) = &state.ui.current_bookmarks_group {
-                let nested_items = get_bookmarks_group_items(&state.bookmarks, group_name);
+                let nested_items = get_bookmarks_group_items(
+                    &state.bookmarks,
+                    state.project_bookmarks.as_ref(),
+                    group_name,
+                    state.ui.current_bookmarks_group_is_project,
+                );
                 if !nested_items.is_empty() {
                     // Calculate position: to the right of bookmarks dropdown
                     let nested_x = menu_x + dropdown.width();

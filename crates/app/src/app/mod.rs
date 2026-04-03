@@ -78,6 +78,10 @@ impl App {
             dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"))
         });
 
+        // Load project-local bookmarks from .termide/ if present
+        state.project_root = project_root.clone();
+        state.project_bookmarks = termide_config::BookmarksConfig::load_from_project(&project_root);
+
         // Initialize logger in session directory (before other initializations that log)
         // Use config override if specified, otherwise use session directory with unique filename
         let log_file_path = if let Some(ref path) = state.config.logging.file_path {

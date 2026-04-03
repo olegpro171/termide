@@ -133,6 +133,8 @@ pub struct UiState {
     pub bookmarks_nested: SubmenuState,
     /// Current bookmarks group name (for nested submenu)
     pub current_bookmarks_group: Option<String>,
+    /// Whether the current bookmarks group is from project-local .termide/
+    pub current_bookmarks_group_is_project: bool,
     /// Is git operation (push/pull) in progress
     pub git_operation_in_progress: bool,
     /// Spinner frame for animated loading indicators
@@ -154,6 +156,7 @@ impl UiState {
         self.bookmarks_submenu.close();
         self.bookmarks_nested.close();
         self.current_bookmarks_group = None;
+        self.current_bookmarks_group_is_project = false;
     }
 }
 

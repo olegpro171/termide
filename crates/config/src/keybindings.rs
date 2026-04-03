@@ -353,7 +353,7 @@ impl GlobalKeybindings {
         set_default!(open_sessions, "Alt+/");
         set_default!(new_session, "Alt+N");
         set_default!(open_git_status, "Alt+G");
-        set_default!(open_bookmark_add, "Alt+K");
+        set_default!(open_bookmark_add, "Alt+B");
         set_default!(open_outline, "Alt+O");
         set_default!(open_diagnostics, "Alt+I");
         set_default!(open_git_log, "Alt+C");

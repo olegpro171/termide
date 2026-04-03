@@ -22,6 +22,8 @@ pub struct DropdownItem {
     pub has_submenu: bool,
     /// Whether this item is a separator line (not selectable)
     pub is_separator: bool,
+    /// Whether this item comes from a project-local .termide/ directory (rendered bold)
+    pub is_project: bool,
 }
 
 impl DropdownItem {
@@ -31,6 +33,7 @@ impl DropdownItem {
             key: key.into(),
             has_submenu: false,
             is_separator: false,
+            is_project: false,
         }
     }
 
@@ -41,12 +44,19 @@ impl DropdownItem {
             key: String::new(),
             has_submenu: false,
             is_separator: true,
+            is_project: false,
         }
     }
 
     /// Mark this item as having a submenu
     pub fn with_submenu(mut self) -> Self {
         self.has_submenu = true;
+        self
+    }
+
+    /// Mark this item as project-local (rendered bold)
+    pub fn with_project(mut self) -> Self {
+        self.is_project = true;
         self
     }
 }
@@ -192,6 +202,11 @@ impl<'a> Dropdown<'a> {
                 Style::default()
                     .bg(self.theme.selected_bg)
                     .fg(self.theme.selected_fg)
+                    .add_modifier(Modifier::BOLD)
+            } else if item.is_project {
+                Style::default()
+                    .fg(self.theme.fg)
+                    .bg(self.theme.bg)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(self.theme.fg).bg(self.theme.bg)
@@ -341,8 +356,6 @@ pub const OPTIONS_SUBMENU_QUIT: usize = 4;
 pub const SCRIPT_ADD_NEW: &str = "__add_script__";
 /// Special ID for "Manage scripts" menu item
 pub const SCRIPT_MANAGE: &str = "__manage_scripts__";
-/// Special ID for "Manage bookmarks" menu item
-pub const BOOKMARK_MANAGE: &str = "__manage_bookmarks__";
 
 /// Get scripts submenu items from ScriptsRegistry
 pub fn get_scripts_items(registry: &termide_config::scripts::ScriptsRegistry) -> Vec<DropdownItem> {
@@ -354,12 +367,20 @@ pub fn get_scripts_items(registry: &termide_config::scripts::ScriptsRegistry) ->
 
     // Add root items (scripts in scripts/ root)
     for script in &registry.root_items {
-        items.push(DropdownItem::new(&script.name, &script.name));
+        let mut item = DropdownItem::new(&script.name, &script.name);
+        if script.is_project {
+            item = item.with_project();
+        }
+        items.push(item);
     }
 
     // Add groups (subdirectories) with submenu indicator
     for group in &registry.groups {
-        items.push(DropdownItem::new(&group.name, &group.name).with_submenu());
+        let mut item = DropdownItem::new(&group.name, &group.name).with_submenu();
+        if group.is_project {
+            item = item.with_project();
+        }
+        items.push(item);
     }
 
     // If no scripts exist, show "Add script..." item
@@ -383,7 +404,13 @@ pub fn get_scripts_group_items(
             group
                 .items
                 .iter()
-                .map(|script| DropdownItem::new(&script.name, &script.name))
+                .map(|script| {
+                    let mut item = DropdownItem::new(&script.name, &script.name);
+                    if script.is_project {
+                        item = item.with_project();
+                    }
+                    item
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -392,56 +419,114 @@ pub fn get_scripts_group_items(
 /// Special bookmark action IDs
 pub const BOOKMARK_ADD_CURRENT: &str = "__bookmark_add__";
 
-/// Get bookmarks submenu items from BookmarksConfig
-pub fn get_bookmarks_items(config: &termide_config::BookmarksConfig) -> Vec<DropdownItem> {
+/// Format bookmark label with type icon prefix (when terminal supports emoji)
+fn bookmark_label(bookmark: &termide_config::Bookmark) -> String {
+    if termide_core::use_emoji_icons() {
+        let icon = bookmark.bookmark_type().icon();
+        format!("{} {}", icon, bookmark.display_name())
+    } else {
+        bookmark.display_name().to_string()
+    }
+}
+
+/// Get bookmarks submenu items from BookmarksConfig and optional project bookmarks
+pub fn get_bookmarks_items(
+    config: &termide_config::BookmarksConfig,
+    project_config: Option<&termide_config::BookmarksConfig>,
+) -> Vec<DropdownItem> {
     let t = i18n::t();
     let mut items = vec![
         DropdownItem::new(t.bookmarks_add_bookmark(), BOOKMARK_ADD_CURRENT),
-        DropdownItem::new(t.bookmarks_manage(), BOOKMARK_MANAGE),
         DropdownItem::separator(),
     ];
 
-    if config.is_empty() {
+    let group_icon = if termide_core::use_emoji_icons() {
+        "📂 "
+    } else {
+        ""
+    };
+
+    // Add project bookmarks first (bold)
+    if let Some(proj) = project_config {
+        for group_name in proj.named_groups().keys() {
+            items.push(
+                DropdownItem::new(format!("{group_icon}{group_name}"), group_name.as_str())
+                    .with_submenu()
+                    .with_project(),
+            );
+        }
+        for bookmark in proj.ungrouped() {
+            items.push(DropdownItem::new(bookmark_label(bookmark), &bookmark.path).with_project());
+        }
+        if !proj.is_empty() && !config.is_empty() {
+            items.push(DropdownItem::separator());
+        }
+    }
+
+    if config.is_empty() && project_config.is_none_or(|p| p.is_empty()) {
         items.push(DropdownItem::new(t.bookmarks_no_bookmarks(), ""));
         return items;
     }
 
-    // Add named groups first (as submenus)
+    // Add global named groups (as submenus)
     let named_groups = config.named_groups();
     for group_name in named_groups.keys() {
-        items.push(DropdownItem::new(group_name, group_name).with_submenu());
+        items.push(
+            DropdownItem::new(format!("{group_icon}{group_name}"), group_name.as_str())
+                .with_submenu(),
+        );
     }
 
-    // Add ungrouped bookmarks directly in menu (not in submenu)
+    // Add global ungrouped bookmarks directly in menu
     for bookmark in config.ungrouped() {
-        items.push(DropdownItem::new(bookmark.display_name(), &bookmark.path));
+        items.push(DropdownItem::new(bookmark_label(bookmark), &bookmark.path));
     }
 
     items
 }
 
 /// Get bookmarks count for determining submenu item count
-pub fn get_bookmarks_item_count(config: &termide_config::BookmarksConfig) -> usize {
-    if config.is_empty() {
-        4 // add_current + manage + separator + no_bookmarks
+pub fn get_bookmarks_item_count(
+    config: &termide_config::BookmarksConfig,
+    project_config: Option<&termide_config::BookmarksConfig>,
+) -> usize {
+    let project_count = project_config.map_or(0, |p| {
+        let separator = if !p.is_empty() && !config.is_empty() {
+            1
+        } else {
+            0
+        };
+        p.named_groups().len() + p.ungrouped().len() + separator
+    });
+    if config.is_empty() && project_config.is_none_or(|p| p.is_empty()) {
+        3 // add + separator + no_bookmarks
     } else {
-        3 + config.named_groups().len() + config.ungrouped().len() // add + manage + sep + items
+        2 + project_count + config.named_groups().len() + config.ungrouped().len()
     }
 }
 
 /// Get bookmark items for a specific group
 pub fn get_bookmarks_group_items(
     config: &termide_config::BookmarksConfig,
+    project_config: Option<&termide_config::BookmarksConfig>,
     group_name: &str,
+    is_project_group: bool,
 ) -> Vec<DropdownItem> {
-    config
-        .grouped()
-        .get(group_name)
-        .map(|bookmarks| {
-            bookmarks
-                .iter()
-                .map(|b| DropdownItem::new(b.display_name(), &b.path))
-                .collect()
-        })
-        .unwrap_or_default()
+    if is_project_group {
+        project_config
+            .and_then(|proj| proj.grouped().get(group_name).cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|b| DropdownItem::new(bookmark_label(b), &b.path).with_project())
+            .collect()
+    } else {
+        config
+            .grouped()
+            .get(group_name)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|b| DropdownItem::new(bookmark_label(b), &b.path))
+            .collect()
+    }
 }

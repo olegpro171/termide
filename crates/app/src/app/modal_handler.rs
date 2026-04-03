@@ -184,6 +184,46 @@ impl App {
                     return Ok(());
                 }
 
+                // Return to bookmarks menu on cancel of bookmark deletion
+                if matches!(result, ModalResult::Cancelled) {
+                    use termide_state::PendingAction;
+                    if let Some(action) = self.state.pending_action.take() {
+                        match action {
+                            PendingAction::DeleteBookmark {
+                                group,
+                                is_project,
+                                selected,
+                                ..
+                            }
+                            | PendingAction::AddBookmark {
+                                group,
+                                is_project,
+                                selected,
+                            }
+                            | PendingAction::EditBookmark {
+                                group,
+                                is_project,
+                                selected,
+                                ..
+                            } => {
+                                self.state.close_modal();
+                                self.reopen_bookmarks_menu(group, is_project, selected);
+                                return Ok(());
+                            }
+                            PendingAction::DeleteBookmarkGroup {
+                                selected,
+                                is_project,
+                                ..
+                            } => {
+                                self.state.close_modal();
+                                self.reopen_bookmarks_menu(None, is_project, selected);
+                                return Ok(());
+                            }
+                            other => self.state.pending_action = Some(other),
+                        }
+                    }
+                }
+
                 self.sync_copy_symlink_flag();
                 self.state.close_modal();
                 if let ModalResult::Confirmed(value) = result {
@@ -335,6 +375,71 @@ impl App {
                         self.handle_delete_session(&path)?;
                     }
                 }
+                PendingAction::DeleteBookmark {
+                    path,
+                    is_project,
+                    group,
+                    selected,
+                } => {
+                    if value.downcast_ref::<bool>().copied().unwrap_or(false) {
+                        if is_project {
+                            if let Some(ref mut proj) = self.state.project_bookmarks {
+                                proj.remove_in_group(&path, group.as_deref());
+                                let proj_dir = self.state.project_root.join(".termide");
+                                let _ = proj.save_to_dir(&proj_dir);
+                            }
+                        } else {
+                            self.state
+                                .bookmarks
+                                .remove_in_group(&path, group.as_deref());
+                            let _ = self.state.bookmarks.save();
+                        }
+                    }
+                    self.reopen_bookmarks_menu(group, is_project, selected);
+                }
+                PendingAction::DeleteBookmarkGroup {
+                    group,
+                    is_project,
+                    selected,
+                } => {
+                    if value.downcast_ref::<bool>().copied().unwrap_or(false) {
+                        if is_project {
+                            if let Some(ref mut proj) = self.state.project_bookmarks {
+                                proj.remove_group(&group);
+                                let proj_dir = self.state.project_root.join(".termide");
+                                let _ = proj.save_to_dir(&proj_dir);
+                            }
+                        } else {
+                            self.state.bookmarks.remove_group(&group);
+                            let _ = self.state.bookmarks.save();
+                        }
+                    }
+                    self.reopen_bookmarks_menu(None, false, selected);
+                }
+                PendingAction::EditBookmark {
+                    original_path,
+                    original_group,
+                    was_project,
+                    selected,
+                    ..
+                } => {
+                    use termide_modal::BookmarkAddResult;
+                    let result_group = value
+                        .downcast_ref::<BookmarkAddResult>()
+                        .and_then(|r| r.group.clone());
+                    let result_is_project = value
+                        .downcast_ref::<BookmarkAddResult>()
+                        .is_some_and(|r| r.is_project);
+                    if let Some(err) = self.handle_edit_bookmark_result(
+                        value,
+                        &original_path,
+                        original_group.as_deref(),
+                        was_project,
+                    )? {
+                        self.show_bookmark_error(&err);
+                    }
+                    self.reopen_bookmarks_menu(result_group, result_is_project, selected);
+                }
                 PendingAction::ChangeRootPath => {
                     self.handle_change_root_path_result(value)?;
                 }
@@ -367,8 +472,18 @@ impl App {
                     self.handle_switch_directory(value)?;
                 }
                 // Add bookmark
-                PendingAction::AddBookmark => {
-                    self.handle_add_bookmark_result(value)?;
+                PendingAction::AddBookmark { selected, .. } => {
+                    use termide_modal::BookmarkAddResult;
+                    let result_group = value
+                        .downcast_ref::<BookmarkAddResult>()
+                        .and_then(|r| r.group.clone());
+                    let result_is_project = value
+                        .downcast_ref::<BookmarkAddResult>()
+                        .is_some_and(|r| r.is_project);
+                    if let Some(err) = self.handle_add_bookmark_result(value)? {
+                        self.show_bookmark_error(&err);
+                    }
+                    self.reopen_bookmarks_menu(result_group, result_is_project, selected);
                 }
                 // Go to path/URL
                 PendingAction::GoToPath {
@@ -623,33 +738,150 @@ impl App {
     }
 
     /// Handle bookmark add result
-    fn handle_add_bookmark_result(&mut self, value: Box<dyn std::any::Any>) -> Result<()> {
+    /// Returns an error message if the bookmark could not be saved.
+    fn handle_add_bookmark_result(
+        &mut self,
+        value: Box<dyn std::any::Any>,
+    ) -> Result<Option<String>> {
         use std::path::Path;
         use termide_config::Bookmark;
         use termide_modal::BookmarkAddResult;
 
-        if let Some(result) = value.downcast_ref::<BookmarkAddResult>() {
-            let mut bookmark = Bookmark::new(result.path.clone());
+        let Some(result) = value.downcast_ref::<BookmarkAddResult>() else {
+            return Ok(None);
+        };
 
-            // Use provided description or generate from path (last component)
-            let description = match &result.description {
-                Some(desc) => desc.clone(),
-                None => Path::new(&result.path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| result.path.clone()),
-            };
-            bookmark = bookmark.with_description(description);
-
-            if let Some(group) = &result.group {
-                bookmark = bookmark.with_group(group.clone());
-            }
-
-            self.state.bookmarks.add(bookmark);
-            self.state.save_bookmarks();
+        if result.path.is_empty() {
+            return Ok(Some("Bookmark path cannot be empty".to_string()));
         }
-        Ok(())
+
+        let mut bookmark = Bookmark::new(result.path.clone());
+
+        let description = match &result.description {
+            Some(desc) => desc.clone(),
+            None => Path::new(&result.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| result.path.clone()),
+        };
+        bookmark = bookmark.with_description(description);
+
+        if let Some(group) = &result.group {
+            bookmark = bookmark.with_group(group.clone());
+        }
+
+        if result.is_project {
+            let proj = self
+                .state
+                .project_bookmarks
+                .get_or_insert_with(Default::default);
+            proj.bookmarks.push(bookmark);
+            let proj_dir = self.state.project_root.join(".termide");
+            if let Err(e) = std::fs::create_dir_all(&proj_dir) {
+                return Ok(Some(format!("Failed to create .termide/: {e}")));
+            }
+            if let Err(e) = proj.save_to_dir(&proj_dir) {
+                return Ok(Some(format!("Failed to save project bookmarks: {e}")));
+            }
+        } else {
+            self.state.bookmarks.bookmarks.push(bookmark);
+            if let Err(e) = self.state.bookmarks.save() {
+                return Ok(Some(format!("Failed to save bookmarks: {e}")));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Handle bookmark edit result — remove old bookmark, add updated one.
+    /// Returns an error message if saving failed.
+    fn handle_edit_bookmark_result(
+        &mut self,
+        value: Box<dyn std::any::Any>,
+        original_path: &str,
+        original_group: Option<&str>,
+        was_project: bool,
+    ) -> Result<Option<String>> {
+        use std::path::Path;
+        use termide_config::Bookmark;
+        use termide_modal::BookmarkAddResult;
+
+        let Some(result) = value.downcast_ref::<BookmarkAddResult>() else {
+            return Ok(None);
+        };
+
+        if result.path.is_empty() {
+            return Ok(Some("Bookmark path cannot be empty".to_string()));
+        }
+
+        // Remove old bookmark from its original location (by path + group)
+        if was_project {
+            if let Some(ref mut proj) = self.state.project_bookmarks {
+                proj.remove_in_group(original_path, original_group);
+            }
+        } else {
+            self.state
+                .bookmarks
+                .remove_in_group(original_path, original_group);
+        }
+
+        // Build new bookmark
+        let mut bookmark = Bookmark::new(result.path.clone());
+        let description = match &result.description {
+            Some(desc) => desc.clone(),
+            None => Path::new(&result.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| result.path.clone()),
+        };
+        bookmark = bookmark.with_description(description);
+        if let Some(group) = &result.group {
+            bookmark = bookmark.with_group(group.clone());
+        }
+
+        // Add to target location
+        if result.is_project {
+            let proj = self
+                .state
+                .project_bookmarks
+                .get_or_insert_with(Default::default);
+            proj.bookmarks.push(bookmark);
+            let proj_dir = self.state.project_root.join(".termide");
+            if let Err(e) = std::fs::create_dir_all(&proj_dir) {
+                return Ok(Some(format!("Failed to create .termide/: {e}")));
+            }
+            if let Err(e) = proj.save_to_dir(&proj_dir) {
+                return Ok(Some(format!("Failed to save project bookmarks: {e}")));
+            }
+        } else {
+            self.state.bookmarks.bookmarks.push(bookmark);
+            if let Err(e) = self.state.bookmarks.save() {
+                return Ok(Some(format!("Failed to save bookmarks: {e}")));
+            }
+        }
+
+        // Save the source too if it changed location (project ↔ global)
+        if was_project && !result.is_project {
+            if let Some(ref proj) = self.state.project_bookmarks {
+                let proj_dir = self.state.project_root.join(".termide");
+                let _ = proj.save_to_dir(&proj_dir);
+            }
+        } else if !was_project && result.is_project {
+            let _ = self.state.bookmarks.save();
+        }
+
+        Ok(None)
+    }
+
+    /// Show an error about a bookmark operation via InfoModal
+    fn show_bookmark_error(&mut self, message: &str) {
+        use termide_modal::InfoModal;
+        let modal = InfoModal::new(
+            "Bookmark error",
+            vec![("".to_string(), message.to_string())],
+        );
+        self.state.active_modal = Some(ActiveModal::Info(Box::new(modal)));
     }
 
     /// Handle search result

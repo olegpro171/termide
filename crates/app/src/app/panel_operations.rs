@@ -365,6 +365,9 @@ impl App {
 
         // 3. Update project_root
         self.project_root = new_project_root;
+        self.state.project_root = self.project_root.clone();
+        self.state.project_bookmarks =
+            termide_config::BookmarksConfig::load_from_project(&self.project_root);
 
         // 4. Load new session
         self.load_session()?;
@@ -425,6 +428,9 @@ impl App {
 
         // 4. Update project_root
         self.project_root = new_project_root.clone();
+        self.state.project_root = self.project_root.clone();
+        self.state.project_bookmarks =
+            termide_config::BookmarksConfig::load_from_project(&self.project_root);
 
         // 5. Create fresh layout with default panels (2 FileManagers)
         self.layout_manager = termide_layout::LayoutManager::new();
@@ -511,6 +517,9 @@ impl App {
 
         // 4. Update project_root
         self.project_root = new_project_root;
+        self.state.project_root = self.project_root.clone();
+        self.state.project_bookmarks =
+            termide_config::BookmarksConfig::load_from_project(&self.project_root);
 
         // 5. Save session in new location
         self.auto_save_session();
