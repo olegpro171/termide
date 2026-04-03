@@ -445,35 +445,49 @@ impl App {
         // Check network/CPU/RAM/clock indicator clicks (right side of menu bar)
         let (net_range, cpu_range, ram_range, clock_range) = self.get_indicator_ranges();
 
-        if net_range.contains(&x) {
-            self.open_resource_modal(crate::state::ResourceModalKind::Network);
-            return Ok(());
-        }
-        if cpu_range.contains(&x) {
-            self.open_resource_modal(crate::state::ResourceModalKind::Cpu);
-            return Ok(());
-        }
-        if ram_range.contains(&x) {
-            self.open_resource_modal(crate::state::ResourceModalKind::Ram);
-            return Ok(());
-        }
-        if clock_range.contains(&x) {
-            self.open_calendar_modal();
+        use termide_ui_render::{
+            INDICATOR_CLOCK_INDEX, INDICATOR_CPU_INDEX, INDICATOR_NET_INDEX, INDICATOR_RAM_INDEX,
+        };
+
+        let indicator = if net_range.contains(&x) {
+            Some((INDICATOR_NET_INDEX, net_range.start))
+        } else if cpu_range.contains(&x) {
+            Some((INDICATOR_CPU_INDEX, cpu_range.start))
+        } else if ram_range.contains(&x) {
+            Some((INDICATOR_RAM_INDEX, ram_range.start))
+        } else if clock_range.contains(&x) {
+            Some((INDICATOR_CLOCK_INDEX, clock_range.start))
+        } else {
+            None
+        };
+
+        if let Some((index, anchor_x)) = indicator {
+            // Open menu state so Left/Right navigation works
+            self.state.ui.menu_open = true;
+            self.state.ui.selected_menu_item = Some(index);
+            self.state.ui.close_all_submenus();
+
+            if index == INDICATOR_CLOCK_INDEX {
+                let modal = termide_modal::CalendarModal::new().with_anchor(anchor_x, 1);
+                self.state.active_modal =
+                    Some(termide_modal::ActiveModal::Calendar(Box::new(modal)));
+                self.state.needs_redraw = true;
+            } else {
+                let kind = match index {
+                    INDICATOR_NET_INDEX => crate::state::ResourceModalKind::Network,
+                    INDICATOR_CPU_INDEX => crate::state::ResourceModalKind::Cpu,
+                    _ => crate::state::ResourceModalKind::Ram,
+                };
+                self.open_resource_modal_at(kind, Some((anchor_x, 1)));
+            }
             return Ok(());
         }
 
         Ok(())
     }
 
-    /// Open calendar modal.
-    pub(super) fn open_calendar_modal(&mut self) {
-        let modal = modal::CalendarModal::new();
-        self.state.active_modal = Some(ActiveModal::Calendar(Box::new(modal)));
-        self.state.needs_redraw = true;
-    }
-
     /// Compute network, CPU, RAM and clock indicator x-ranges in the menu bar.
-    fn get_indicator_ranges(
+    pub(super) fn get_indicator_ranges(
         &self,
     ) -> (
         std::ops::Range<u16>,
@@ -541,7 +555,11 @@ impl App {
     }
 
     /// Open CPU, RAM or Network processes modal.
-    pub(super) fn open_resource_modal(&mut self, kind: crate::state::ResourceModalKind) {
+    pub(super) fn open_resource_modal_at(
+        &mut self,
+        kind: crate::state::ResourceModalKind,
+        anchor: Option<(u16, u16)>,
+    ) {
         use crate::state::ResourceModalKind;
 
         let t = i18n::t();
@@ -563,7 +581,10 @@ impl App {
             }
             ResourceModalKind::Disk => return,
         };
-        let modal = modal::InfoModal::new_rich(title, lines).with_min_width(57);
+        let mut modal = modal::InfoModal::new_rich(title, lines).with_min_width(57);
+        if let Some((x, y)) = anchor {
+            modal = modal.with_anchor(x, y).without_button();
+        }
         self.state.active_modal = Some(ActiveModal::Info(Box::new(modal)));
         self.state.resource_modal_kind = Some(kind);
         self.state.last_resource_modal_refresh = Some(std::time::Instant::now());

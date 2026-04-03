@@ -86,14 +86,14 @@ use termide_ui_render::{
 
 impl App {
     /// Switch to next root menu item and open its submenu
-    fn switch_to_next_menu(&mut self) -> Result<()> {
+    pub(super) fn switch_to_next_menu(&mut self) -> Result<()> {
         self.state.ui.close_all_submenus();
         self.state.next_menu_item(MENU_TOTAL_COUNT);
         self.execute_menu_action()
     }
 
     /// Switch to previous root menu item and open its submenu
-    fn switch_to_prev_menu(&mut self) -> Result<()> {
+    pub(super) fn switch_to_prev_menu(&mut self) -> Result<()> {
         self.state.ui.close_all_submenus();
         self.state.prev_menu_item(MENU_TOTAL_COUNT);
         self.execute_menu_action()
@@ -140,26 +140,44 @@ impl App {
                 OPTIONS_MENU_INDEX => {
                     self.state.open_submenu();
                 }
-                INDICATOR_NET_INDEX => {
-                    self.open_resource_modal(crate::state::ResourceModalKind::Network);
-                    self.state.close_menu();
-                }
-                INDICATOR_CPU_INDEX => {
-                    self.open_resource_modal(crate::state::ResourceModalKind::Cpu);
-                    self.state.close_menu();
-                }
-                INDICATOR_RAM_INDEX => {
-                    self.open_resource_modal(crate::state::ResourceModalKind::Ram);
-                    self.state.close_menu();
-                }
-                INDICATOR_CLOCK_INDEX => {
-                    self.open_calendar_modal();
-                    self.state.close_menu();
+                INDICATOR_NET_INDEX
+                | INDICATOR_CPU_INDEX
+                | INDICATOR_RAM_INDEX
+                | INDICATOR_CLOCK_INDEX => {
+                    self.open_indicator_as_submenu(menu_index);
                 }
                 _ => {}
             }
         }
         Ok(())
+    }
+
+    /// Open an indicator modal positioned as a dropdown under the indicator.
+    fn open_indicator_as_submenu(&mut self, menu_index: usize) {
+        let (net_range, cpu_range, ram_range, clock_range) = self.get_indicator_ranges();
+        let anchor_x = match menu_index {
+            INDICATOR_NET_INDEX => net_range.start,
+            INDICATOR_CPU_INDEX => cpu_range.start,
+            INDICATOR_RAM_INDEX => ram_range.start,
+            INDICATOR_CLOCK_INDEX => clock_range.start,
+            _ => 0,
+        };
+
+        self.state.active_modal = None;
+
+        if menu_index == INDICATOR_CLOCK_INDEX {
+            let modal = termide_modal::CalendarModal::new().with_anchor(anchor_x, 1);
+            self.state.active_modal = Some(termide_modal::ActiveModal::Calendar(Box::new(modal)));
+            self.state.needs_redraw = true;
+        } else {
+            let kind = match menu_index {
+                INDICATOR_NET_INDEX => crate::state::ResourceModalKind::Network,
+                INDICATOR_CPU_INDEX => crate::state::ResourceModalKind::Cpu,
+                INDICATOR_RAM_INDEX => crate::state::ResourceModalKind::Ram,
+                _ => return,
+            };
+            self.open_resource_modal_at(kind, Some((anchor_x, 1)));
+        }
     }
 
     /// Open sessions modal to switch between projects

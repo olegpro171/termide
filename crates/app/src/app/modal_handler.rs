@@ -1,6 +1,7 @@
 //! Modal window handling for the application.
 
 use anyhow::Result;
+use crossterm::event::KeyCode;
 
 use super::App;
 use crate::panel_ext::PanelExt;
@@ -72,6 +73,40 @@ impl App {
 
     /// Handle keyboard event in modal window
     pub(super) fn handle_modal_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
+        // Indicator modals opened from menu: intercept Left/Right/Esc for menu navigation
+        if self.state.ui.menu_open {
+            let is_resource = self.state.resource_modal_kind.is_some()
+                && matches!(self.state.active_modal, Some(ActiveModal::Info(_)));
+            let is_calendar = matches!(self.state.active_modal, Some(ActiveModal::Calendar(_)));
+
+            if is_resource || is_calendar {
+                match key.code {
+                    KeyCode::Esc => {
+                        self.state.close_menu();
+                        self.state.active_modal = None;
+                        self.state.resource_modal_kind = None;
+                        self.state.last_resource_modal_refresh = None;
+                        return Ok(());
+                    }
+                    KeyCode::Left if is_resource => {
+                        self.state.active_modal = None;
+                        self.state.resource_modal_kind = None;
+                        self.state.last_resource_modal_refresh = None;
+                        self.switch_to_prev_menu()?;
+                        return Ok(());
+                    }
+                    KeyCode::Right if is_resource => {
+                        self.state.active_modal = None;
+                        self.state.resource_modal_kind = None;
+                        self.state.last_resource_modal_refresh = None;
+                        self.switch_to_next_menu()?;
+                        return Ok(());
+                    }
+                    _ => {} // Calendar uses arrows for day navigation — fall through
+                }
+            }
+        }
+
         // Get mutable reference to active modal window
         if let Some(modal) = self.state.get_active_modal_mut() {
             // Handle event in corresponding modal window

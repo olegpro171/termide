@@ -33,6 +33,8 @@ pub struct CalendarModal {
     today: NaiveDate,
     /// Cached area for mouse hit-testing
     last_area: Option<Rect>,
+    /// Optional anchor position (x, y) instead of centering
+    anchor: Option<(u16, u16)>,
 }
 
 impl Default for CalendarModal {
@@ -51,7 +53,14 @@ impl CalendarModal {
             selected_day: today.day(),
             today,
             last_area: None,
+            anchor: None,
         }
+    }
+
+    /// Position calendar at anchor point instead of centering.
+    pub fn with_anchor(mut self, x: u16, y: u16) -> Self {
+        self.anchor = Some((x, y));
+        self
     }
 
     /// First day of the displayed month.
@@ -131,7 +140,18 @@ impl Modal for CalendarModal {
     type Result = ();
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
-        let modal_area = centered_rect_with_size(CALENDAR_WIDTH, CALENDAR_HEIGHT, area);
+        let modal_area = if let Some((ax, ay)) = self.anchor {
+            let x = ax.min(area.width.saturating_sub(CALENDAR_WIDTH));
+            let y = ay.min(area.height.saturating_sub(CALENDAR_HEIGHT));
+            Rect {
+                x,
+                y,
+                width: CALENDAR_WIDTH,
+                height: CALENDAR_HEIGHT,
+            }
+        } else {
+            centered_rect_with_size(CALENDAR_WIDTH, CALENDAR_HEIGHT, area)
+        };
         self.last_area = Some(modal_area);
 
         let t = i18n::t();

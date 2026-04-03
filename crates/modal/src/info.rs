@@ -55,6 +55,8 @@ pub struct InfoModal {
     spinner_frame: usize,             // Frame counter for spinner animation
     last_button_area: Option<Rect>,   // For mouse handling
     min_width: Option<u16>,           // Optional minimum width to prevent jitter
+    anchor: Option<(u16, u16)>,       // Optional anchor position (x, y) instead of centering
+    show_button: bool,                // Whether to show the OK button
 }
 
 impl InfoModal {
@@ -70,6 +72,8 @@ impl InfoModal {
             spinner_frame: 0,
             last_button_area: None,
             min_width: None,
+            anchor: None,
+            show_button: true,
         }
     }
 
@@ -81,7 +85,21 @@ impl InfoModal {
             spinner_frame: 0,
             last_button_area: None,
             min_width: None,
+            anchor: None,
+            show_button: true,
         }
+    }
+
+    /// Position modal at anchor point instead of centering.
+    pub fn with_anchor(mut self, x: u16, y: u16) -> Self {
+        self.anchor = Some((x, y));
+        self
+    }
+
+    /// Hide the OK button (for info panels used as dropdown-style displays).
+    pub fn without_button(mut self) -> Self {
+        self.show_button = false;
+        self
     }
 
     /// Set a minimum width to prevent modal jitter on content refresh.
@@ -306,23 +324,38 @@ impl Modal for InfoModal {
 
         // Calculate required height based on wrapped content:
         // 1 (top border) + 1 (empty line) + N (wrapped data lines) +
-        // 1 (empty line) + 1 (button) + 1 (bottom border) = N + 5
-        let modal_height = (total_data_lines + 5) as u16;
+        // 1 (empty line) + optional 1 (button) + 1 (bottom border)
+        let button_height = if self.show_button { 1u16 } else { 0 };
+        let modal_height = (total_data_lines as u16) + 4 + button_height;
 
-        // Create centered area with calculated dimensions
-        let modal_area = centered_rect_with_size(modal_width, modal_height, area);
+        // Position: anchored or centered
+        let modal_area = if let Some((ax, ay)) = self.anchor {
+            let x = ax.min(area.width.saturating_sub(modal_width));
+            let y = ay.min(area.height.saturating_sub(modal_height));
+            Rect {
+                x,
+                y,
+                width: modal_width,
+                height: modal_height,
+            }
+        } else {
+            centered_rect_with_size(modal_width, modal_height, area)
+        };
 
         let inner = render_modal_block(modal_area, buf, &self.title, theme);
 
-        // Split into: empty line, data, empty line, button
+        // Split into: empty line, data, empty line, optional button
+        let mut constraints = vec![
+            Constraint::Length(1),                       // Empty line at top
+            Constraint::Length(total_data_lines as u16), // Data (wrapped)
+            Constraint::Length(1),                       // Empty line
+        ];
+        if self.show_button {
+            constraints.push(Constraint::Length(1)); // Button
+        }
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),                       // Empty line at top
-                Constraint::Length(total_data_lines as u16), // Data (wrapped)
-                Constraint::Length(1),                       // Empty line
-                Constraint::Length(1),                       // Button
-            ])
+            .constraints(constraints)
             .split(inner);
 
         // How many data lines we can actually render (leave 1 for truncation indicator)
@@ -420,20 +453,24 @@ impl Modal for InfoModal {
         let data = Paragraph::new(text_lines).alignment(Alignment::Left);
         data.render(chunks[1], buf);
 
-        // Render Close button (always highlighted)
-        let close_button = Line::from(vec![Span::styled(
-            format!("[ {} ]", t.ui_close()),
-            Style::default()
-                .fg(theme.bg)
-                .bg(theme.fg)
-                .add_modifier(Modifier::BOLD),
-        )]);
+        // Render Close button (conditionally)
+        if self.show_button {
+            let close_button = Line::from(vec![Span::styled(
+                format!("[ {} ]", t.ui_close()),
+                Style::default()
+                    .fg(theme.bg)
+                    .bg(theme.fg)
+                    .add_modifier(Modifier::BOLD),
+            )]);
 
-        let button_paragraph = Paragraph::new(close_button).alignment(Alignment::Center);
-        button_paragraph.render(chunks[3], buf);
+            let button_paragraph = Paragraph::new(close_button).alignment(Alignment::Center);
+            button_paragraph.render(chunks[3], buf);
 
-        // Save button area for mouse handling
-        self.last_button_area = Some(chunks[3]);
+            // Save button area for mouse handling
+            self.last_button_area = Some(chunks[3]);
+        } else {
+            self.last_button_area = None;
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ModalResult<Self::Result>>> {
