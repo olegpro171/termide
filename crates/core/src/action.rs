@@ -42,6 +42,29 @@ pub enum Action {
     /// F12 — Context menu / properties
     ContextMenu,
 
+    // === Non-F-key universal actions ===
+    /// Esc — Cancel / close current context (popup, modal, selection)
+    Cancel,
+    /// Ctrl+F — Search
+    Search,
+    /// Ctrl+R — Refresh
+    Refresh,
+    /// Backspace — Go back (FM: parent dir, Editor: delete prev char via fallback)
+    GoBack,
+
+    // === Navigation ===
+    Up,
+    Down,
+    Left,
+    Right,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Enter,
+    Tab,
+    BackTab,
+
     // === App-level actions (handled before reaching panels) ===
     /// Alt+Q — Quit application
     Quit,
@@ -118,6 +141,23 @@ impl Action {
             Action::ClosePanel => Some(key(KeyCode::F(10))),
             Action::ToggleStack => Some(key(KeyCode::F(11))),
             Action::ContextMenu => Some(key(KeyCode::F(12))),
+            // Non-F-key universal
+            Action::Cancel => Some(key(KeyCode::Esc)),
+            Action::Search => Some(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+            Action::Refresh => Some(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            Action::GoBack => Some(key(KeyCode::Backspace)),
+            // Navigation
+            Action::Up => Some(key(KeyCode::Up)),
+            Action::Down => Some(key(KeyCode::Down)),
+            Action::Left => Some(key(KeyCode::Left)),
+            Action::Right => Some(key(KeyCode::Right)),
+            Action::PageUp => Some(key(KeyCode::PageUp)),
+            Action::PageDown => Some(key(KeyCode::PageDown)),
+            Action::Home => Some(key(KeyCode::Home)),
+            Action::End => Some(key(KeyCode::End)),
+            Action::Enter => Some(key(KeyCode::Enter)),
+            Action::Tab => Some(key(KeyCode::Tab)),
+            Action::BackTab => Some(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
             Action::Other(k) => Some(*k),
             _ => None, // App-level actions don't have a default key
         }
@@ -446,9 +486,56 @@ pub fn normalize(key: KeyEvent, kb: &GlobalKeybindings) -> Action {
     }
 
     // =========================================================================
-    // Unrecognized — pass through
-    // Non-F-key actions (Esc, Ctrl+F, Ctrl+R, Backspace) are NOT normalized
-    // because they have panel-specific meanings. Panels handle them in handle_key.
+    // Non-F-key universal actions
+    // =========================================================================
+
+    if matches_binding_or_default(&kb.cancel, &key, KeyCode::Esc, KeyModifiers::NONE) {
+        return Action::Cancel;
+    }
+
+    if matches_binding_or_default(&kb.search, &key, KeyCode::Char('f'), KeyModifiers::CONTROL) {
+        return Action::Search;
+    }
+
+    if matches_binding_or_default(&kb.refresh, &key, KeyCode::Char('r'), KeyModifiers::CONTROL) {
+        return Action::Refresh;
+    }
+
+    if matches_binding_or_default(&kb.go_back, &key, KeyCode::Backspace, KeyModifiers::NONE) {
+        return Action::GoBack;
+    }
+
+    // DeleteItem also matches bare Delete key (in addition to F8 above)
+    if key.code == KeyCode::Delete && key.modifiers.is_empty() {
+        return Action::DeleteItem;
+    }
+
+    // =========================================================================
+    // Navigation
+    // =========================================================================
+
+    if key.modifiers.is_empty() {
+        match key.code {
+            KeyCode::Up => return Action::Up,
+            KeyCode::Down => return Action::Down,
+            KeyCode::Left => return Action::Left,
+            KeyCode::Right => return Action::Right,
+            KeyCode::PageUp => return Action::PageUp,
+            KeyCode::PageDown => return Action::PageDown,
+            KeyCode::Home => return Action::Home,
+            KeyCode::End => return Action::End,
+            KeyCode::Enter => return Action::Enter,
+            KeyCode::Tab => return Action::Tab,
+            _ => {}
+        }
+    }
+
+    if key.code == KeyCode::BackTab {
+        return Action::BackTab;
+    }
+
+    // =========================================================================
+    // Unrecognized — pass through (chars, modifiers+nav, etc.)
     // =========================================================================
     Action::Other(key)
 }

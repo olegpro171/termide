@@ -1197,20 +1197,36 @@ impl Panel for FileManager {
         use keyboard::FmCommand;
         use termide_core::Action;
 
-        // Map F-key universal actions to FM commands.
-        // Non-F-key actions (Esc, Ctrl+F, Ctrl+R, Backspace) arrive as Other
-        // and are handled by from_key_event below.
+        // Map universal actions to FM commands
         let command = match action {
-            Action::Save => FmCommand::RenameFile,          // F2
-            Action::View => FmCommand::ViewFile,            // F3
-            Action::EditItem => FmCommand::EditFile,        // F4
-            Action::CopyItem => FmCommand::CopyFiles,       // F5
-            Action::MoveItem => FmCommand::MoveFiles,       // F6
-            Action::CreateItem => FmCommand::NewDirectory,  // F7
-            Action::DeleteItem => FmCommand::DeleteFiles,   // F8
-            Action::ContextMenu => FmCommand::ShowFileInfo, // F12
+            // F-key actions
+            Action::Save => FmCommand::RenameFile,
+            Action::View => FmCommand::ViewFile,
+            Action::EditItem => FmCommand::EditFile,
+            Action::CopyItem => FmCommand::CopyFiles,
+            Action::MoveItem => FmCommand::MoveFiles,
+            Action::CreateItem => FmCommand::NewDirectory,
+            Action::DeleteItem => FmCommand::DeleteFiles,
+            Action::ContextMenu => FmCommand::ShowFileInfo,
+            // Non-F-key actions
+            Action::Cancel => FmCommand::ClearSelection,
+            Action::Search => FmCommand::Search,
+            Action::Refresh => FmCommand::Refresh,
+            Action::GoBack => FmCommand::GoParent,
+            // Navigation
+            Action::Up => FmCommand::MoveUp,
+            Action::Down => FmCommand::MoveDown,
+            Action::PageUp => FmCommand::PageUp,
+            Action::PageDown => FmCommand::PageDown,
+            Action::Home => FmCommand::GoHome,
+            Action::End => FmCommand::GoEnd,
+            Action::Enter => FmCommand::Enter,
+            Action::Left => FmCommand::CollapseDir,
+            Action::Right => FmCommand::ExpandDir,
+            Action::Tab => FmCommand::NextPanel,
+            Action::BackTab => FmCommand::PrevPanel,
+            // FM-specific keys (E, V, C, M, R, D, vim, etc.)
             Action::Other(key) => {
-                // Translate Cyrillic for FM-specific keys (E, V, C, M, R, D, vim, etc.)
                 let key = termide_keyboard::translate_hotkey(key);
                 let key = termide_keyboard::translate_all_chars(key);
                 FmCommand::from_key_event(key, &self.cached_config.keybindings, self.vim_mode)

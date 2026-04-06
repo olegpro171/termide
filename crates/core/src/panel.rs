@@ -210,11 +210,13 @@ pub trait Panel: Any {
     /// Handle semantic action from the normalizer.
     ///
     /// Override this to handle universal actions (Save, View, EditItem, etc.).
-    /// Unrecognized keys arrive as `Action::Other(key)` and fall through to `handle_key`.
+    /// Default: converts action back to KeyEvent via `to_default_key()` and
+    /// passes to `handle_key()`, so panels without override work transparently.
     fn handle_action(&mut self, action: crate::Action) -> Vec<PanelEvent> {
-        match action {
-            crate::Action::Other(key) => self.handle_key(key),
-            _ => vec![],
+        if let Some(key) = action.to_default_key() {
+            self.handle_key(key)
+        } else {
+            vec![]
         }
     }
 
