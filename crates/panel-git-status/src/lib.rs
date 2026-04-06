@@ -1217,6 +1217,30 @@ impl Panel for GitStatusPanel {
                 vec![]
             }
             Action::Enter => self.handle_enter_key(),
+            Action::Select => {
+                // Space — show file properties
+                if self.current_section == Section::Files
+                    && matches!(
+                        self.get_selection(),
+                        Some(Selection::UnstagedFile(_)) | Some(Selection::StagedFile(_))
+                    )
+                {
+                    return self.show_file_properties();
+                }
+                vec![]
+            }
+            Action::Toggle => {
+                // Insert — stage file
+                if self.current_section == Section::Files
+                    && matches!(
+                        self.get_selection(),
+                        Some(Selection::UnstagedFile(_)) | Some(Selection::UnstagedDir(_))
+                    )
+                {
+                    self.do_stage();
+                }
+                vec![]
+            }
             Action::Other(key) => self.handle_key(key),
             _ => vec![],
         }
@@ -1230,7 +1254,7 @@ impl Panel for GitStatusPanel {
 
         // Configurable keybindings (checked first)
 
-        // Stage file (Insert, Ctrl+S)
+        // Stage file (Ctrl+S — Insert is handled as Action::Toggle in handle_action)
         if matches_binding_or_defaults(
             &kb.stage_file,
             &key,
@@ -1287,16 +1311,7 @@ impl Panel for GitStatusPanel {
             return vec![];
         }
 
-        // Space - open file properties modal (only for files, not headers)
-        if key.code == KeyCode::Char(' ')
-            && self.current_section == Section::Files
-            && matches!(
-                self.get_selection(),
-                Some(Selection::UnstagedFile(_)) | Some(Selection::StagedFile(_))
-            )
-        {
-            return self.show_file_properties();
-        }
+        // Space is handled as Action::Select in handle_action
 
         vec![]
     }

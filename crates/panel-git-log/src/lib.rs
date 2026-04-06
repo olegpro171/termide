@@ -993,6 +993,43 @@ impl Panel for GitLogPanel {
                 }
                 vec![]
             }
+            Action::Select => {
+                // Space — context-dependent (same as Enter for dropdowns, commit info for commits)
+                match self.current_section {
+                    Section::RepoSelector => {
+                        if self.repo_dropdown_open {
+                            let idx = self.dropdown_cursor;
+                            self.repo_manager.select(idx);
+                            self.repo_dropdown_open = false;
+                            self.selected_branch = None;
+                            self.refresh();
+                        } else {
+                            self.dropdown_cursor = self.repo_manager.selected_index();
+                            self.repo_dropdown_open = true;
+                        }
+                    }
+                    Section::BranchSelector => {
+                        if self.branch_dropdown_open {
+                            let selected = self.branches.get(self.dropdown_cursor).cloned();
+                            let is_current = selected.as_deref() == self.branch.as_deref();
+                            self.selected_branch = if is_current { None } else { selected };
+                            self.branch_dropdown_open = false;
+                            self.refresh();
+                        } else {
+                            self.dropdown_cursor = self
+                                .branches
+                                .iter()
+                                .position(|b| Some(b.as_str()) == self.branch.as_deref())
+                                .unwrap_or(0);
+                            self.branch_dropdown_open = true;
+                        }
+                    }
+                    Section::Commits => {
+                        self.show_commit_info();
+                    }
+                }
+                vec![]
+            }
             Action::Other(key) => self.handle_key(key),
             _ => vec![],
         }
@@ -1066,40 +1103,7 @@ impl Panel for GitLogPanel {
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 return self.open_commit_external();
             }
-            // Space on commits shows commit info
-            KeyCode::Char(' ') => match self.current_section {
-                Section::RepoSelector => {
-                    if self.repo_dropdown_open {
-                        let idx = self.dropdown_cursor;
-                        self.repo_manager.select(idx);
-                        self.repo_dropdown_open = false;
-                        self.selected_branch = None;
-                        self.refresh();
-                    } else {
-                        self.dropdown_cursor = self.repo_manager.selected_index();
-                        self.repo_dropdown_open = true;
-                    }
-                }
-                Section::BranchSelector => {
-                    if self.branch_dropdown_open {
-                        let selected = self.branches.get(self.dropdown_cursor).cloned();
-                        let is_current = selected.as_deref() == self.branch.as_deref();
-                        self.selected_branch = if is_current { None } else { selected };
-                        self.branch_dropdown_open = false;
-                        self.refresh();
-                    } else {
-                        self.dropdown_cursor = self
-                            .branches
-                            .iter()
-                            .position(|b| Some(b.as_str()) == self.branch.as_deref())
-                            .unwrap_or(0);
-                        self.branch_dropdown_open = true;
-                    }
-                }
-                Section::Commits => {
-                    self.show_commit_info();
-                }
-            },
+            // Space is handled as Action::Select in handle_action
             KeyCode::Char('d') => {
                 return self.view_diff();
             }

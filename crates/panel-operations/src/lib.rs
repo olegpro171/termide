@@ -305,6 +305,13 @@ impl Panel for OperationsPanel {
                 self.select_last(total);
                 vec![PanelEvent::NeedsRedraw]
             }
+            termide_core::Action::Select => {
+                if let Some(op_id) = self.selected_operation_id() {
+                    vec![PanelEvent::ToggleOperationPause(op_id)]
+                } else {
+                    vec![]
+                }
+            }
             termide_core::Action::Other(key) => self.handle_key(key),
             _ => vec![],
         }
@@ -312,7 +319,7 @@ impl Panel for OperationsPanel {
 
     fn handle_key(&mut self, key: KeyEvent) -> Vec<PanelEvent> {
         let total = self.operations.len();
-        let mut events = vec![];
+        let events = vec![];
 
         // Vim-mode navigation (j/k/g/G)
         if self.vim_mode {
@@ -337,12 +344,7 @@ impl Panel for OperationsPanel {
             }
         }
 
-        // Pause/Resume (Space)
-        if key.code == KeyCode::Char(' ') {
-            if let Some(op_id) = self.selected_operation_id() {
-                events.push(PanelEvent::ToggleOperationPause(op_id));
-            }
-        }
+        // Space is handled as Action::Select in handle_action
 
         events
     }

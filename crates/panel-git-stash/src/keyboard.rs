@@ -29,7 +29,8 @@ impl GitStashPanel {
         }
 
         match key.code {
-            KeyCode::Enter | KeyCode::Char(' ') => {
+            // Space is handled as Action::Select in handle_action
+            KeyCode::Enter => {
                 return self.action_new();
             }
             KeyCode::Esc => {
@@ -77,7 +78,8 @@ impl GitStashPanel {
         }
 
         match key.code {
-            KeyCode::Enter | KeyCode::Char(' ') => {
+            // Space is handled as Action::Select in handle_action
+            KeyCode::Enter => {
                 return self.action_show_context_menu();
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {

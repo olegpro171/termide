@@ -52,6 +52,15 @@ pub enum Action {
     /// Backspace — Go back (FM: parent dir, Editor: delete prev char via fallback)
     GoBack,
 
+    /// Space — Select / toggle / info (FM: file info, Ops: pause, Git: properties)
+    Select,
+    /// Insert — Toggle (FM: toggle selection, Git Status: stage)
+    Toggle,
+    /// Ctrl+Z — Undo
+    Undo,
+    /// Ctrl+Y / Ctrl+Shift+Z — Redo
+    Redo,
+
     // === Navigation ===
     Up,
     Down,
@@ -146,6 +155,10 @@ impl Action {
             Action::Search => Some(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
             Action::Refresh => Some(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
             Action::GoBack => Some(key(KeyCode::Backspace)),
+            Action::Select => Some(key(KeyCode::Char(' '))),
+            Action::Toggle => Some(key(KeyCode::Insert)),
+            Action::Undo => Some(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL)),
+            Action::Redo => Some(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL)),
             // Navigation
             Action::Up => Some(key(KeyCode::Up)),
             Action::Down => Some(key(KeyCode::Down)),
@@ -415,9 +428,14 @@ pub fn normalize(key: KeyEvent, kb: &GlobalKeybindings) -> Action {
         return Action::Help;
     }
 
-    // Save: only F2 by default.
-    // Ctrl+S stays as Other so editor/terminal can use it for panel-specific save.
-    if matches_binding_or_default(&kb.save, &key, KeyCode::F(2), KeyModifiers::NONE) {
+    if matches_binding_or_defaults(
+        &kb.save,
+        &key,
+        &[
+            (KeyCode::F(2), KeyModifiers::NONE),
+            (KeyCode::Char('s'), KeyModifiers::CONTROL),
+        ],
+    ) {
         return Action::Save;
     }
 
@@ -508,6 +526,32 @@ pub fn normalize(key: KeyEvent, kb: &GlobalKeybindings) -> Action {
     // DeleteItem also matches bare Delete key (in addition to F8 above)
     if key.code == KeyCode::Delete && key.modifiers.is_empty() {
         return Action::DeleteItem;
+    }
+
+    if matches_binding_or_default(&kb.select, &key, KeyCode::Char(' '), KeyModifiers::NONE) {
+        return Action::Select;
+    }
+
+    if matches_binding_or_default(&kb.toggle, &key, KeyCode::Insert, KeyModifiers::NONE) {
+        return Action::Toggle;
+    }
+
+    if matches_binding_or_default(&kb.undo, &key, KeyCode::Char('z'), KeyModifiers::CONTROL) {
+        return Action::Undo;
+    }
+
+    if matches_binding_or_defaults(
+        &kb.redo,
+        &key,
+        &[
+            (KeyCode::Char('y'), KeyModifiers::CONTROL),
+            (
+                KeyCode::Char('Z'),
+                KeyModifiers::CONTROL.union(KeyModifiers::SHIFT),
+            ),
+        ],
+    ) {
+        return Action::Redo;
     }
 
     // =========================================================================

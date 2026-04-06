@@ -124,7 +124,8 @@ impl FmCommand {
             return Self::Refresh;
         }
 
-        // Toggle selection
+        // Toggle selection — Insert is handled as Action::Toggle in handle_action.
+        // Only check user-configured override here (non-Insert bindings).
         if matches_binding_or_default(
             &keybindings.toggle_selection,
             &key,
@@ -311,8 +312,7 @@ impl FmCommand {
         }
 
         match (key.code, key.modifiers) {
-            // Space - show file information
-            (KeyCode::Char(' '), KeyModifiers::NONE) => Self::ShowFileInfo,
+            // Space is handled as Action::Select in handle_action
 
             // Selection with Shift
             (KeyCode::Down, KeyModifiers::SHIFT) => Self::MoveDownWithSelection,
@@ -500,74 +500,42 @@ mod tests {
     fn test_file_operations() {
         let kb = default_keybindings();
 
-        // View file (V, F3)
+        // Letter shortcuts (handled by from_key_event via Other)
         assert_eq!(
             FmCommand::from_key_event(key(KeyCode::Char('v'), KeyModifiers::NONE), &kb, false),
             FmCommand::ViewFile
         );
         assert_eq!(
-            FmCommand::from_key_event(key(KeyCode::F(3), KeyModifiers::NONE), &kb, false),
-            FmCommand::ViewFile
-        );
-
-        // Edit file (E, F4)
-        assert_eq!(
             FmCommand::from_key_event(key(KeyCode::Char('e'), KeyModifiers::NONE), &kb, false),
             FmCommand::EditFile
         );
-        assert_eq!(
-            FmCommand::from_key_event(key(KeyCode::F(4), KeyModifiers::NONE), &kb, false),
-            FmCommand::EditFile
-        );
-
-        // Rename file (R, F2)
         assert_eq!(
             FmCommand::from_key_event(key(KeyCode::Char('r'), KeyModifiers::NONE), &kb, false),
             FmCommand::RenameFile
         );
         assert_eq!(
-            FmCommand::from_key_event(key(KeyCode::F(2), KeyModifiers::NONE), &kb, false),
-            FmCommand::RenameFile
-        );
-
-        // Copy files (C, F5)
-        assert_eq!(
             FmCommand::from_key_event(key(KeyCode::Char('c'), KeyModifiers::NONE), &kb, false),
             FmCommand::CopyFiles
         );
-        assert_eq!(
-            FmCommand::from_key_event(key(KeyCode::F(5), KeyModifiers::NONE), &kb, false),
-            FmCommand::CopyFiles
-        );
-
-        // Move files (M, F6)
         assert_eq!(
             FmCommand::from_key_event(key(KeyCode::Char('m'), KeyModifiers::NONE), &kb, false),
             FmCommand::MoveFiles
         );
         assert_eq!(
-            FmCommand::from_key_event(key(KeyCode::F(6), KeyModifiers::NONE), &kb, false),
-            FmCommand::MoveFiles
-        );
-
-        // New directory (D, F7)
-        assert_eq!(
             FmCommand::from_key_event(key(KeyCode::Char('d'), KeyModifiers::NONE), &kb, false),
             FmCommand::NewDirectory
         );
         assert_eq!(
-            FmCommand::from_key_event(key(KeyCode::F(7), KeyModifiers::NONE), &kb, false),
-            FmCommand::NewDirectory
-        );
-
-        // Delete files (Delete, F8)
-        assert_eq!(
             FmCommand::from_key_event(key(KeyCode::Delete, KeyModifiers::NONE), &kb, false),
             FmCommand::DeleteFiles
         );
+
+        // F-keys (F2-F8) are handled by handle_action via Action normalizer,
+        // NOT by from_key_event. They arrive as Action::Save/View/EditItem/etc.
+        // and are mapped in handle_action(). from_key_event returns None for them.
         assert_eq!(
-            FmCommand::from_key_event(key(KeyCode::F(8), KeyModifiers::NONE), &kb, false),
-            FmCommand::DeleteFiles
+            FmCommand::from_key_event(key(KeyCode::F(4), KeyModifiers::NONE), &kb, false),
+            FmCommand::None
         );
     }
 

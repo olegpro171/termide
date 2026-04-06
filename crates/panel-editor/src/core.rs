@@ -1730,7 +1730,9 @@ impl Panel for Editor {
             }
             // Navigation and other actions — forward as default key events
             // The editor's EditorCommand::from_key_event handles all key routing
-            Action::Cancel
+            Action::Undo
+            | Action::Redo
+            | Action::Cancel
             | Action::Search
             | Action::Refresh
             | Action::GoBack

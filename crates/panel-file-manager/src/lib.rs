@@ -1213,6 +1213,8 @@ impl Panel for FileManager {
             Action::Search => FmCommand::Search,
             Action::Refresh => FmCommand::Refresh,
             Action::GoBack => FmCommand::GoParent,
+            Action::Select => FmCommand::ShowFileInfo,
+            Action::Toggle => FmCommand::ToggleSelection,
             // Navigation
             Action::Up => FmCommand::MoveUp,
             Action::Down => FmCommand::MoveDown,

@@ -232,6 +232,10 @@ pub struct GlobalKeybindings {
     pub search: Option<KeyBinding>,
     pub refresh: Option<KeyBinding>,
     pub go_back: Option<KeyBinding>,
+    pub select: Option<KeyBinding>,
+    pub toggle: Option<KeyBinding>,
+    pub undo: Option<KeyBinding>,
+    pub redo: Option<KeyBinding>,
 }
 
 /// Editor keybindings (editor.keybindings section).
@@ -422,6 +426,10 @@ impl GlobalKeybindings {
         set_default!(search, "Ctrl+F");
         set_default!(refresh, "Ctrl+R");
         set_default!(go_back, "Backspace");
+        set_default!(select, "Space");
+        set_default!(toggle, "Insert");
+        set_default!(undo, "Ctrl+Z");
+        set_default_multiple!(redo, "Ctrl+Y", "Ctrl+Shift+Z");
     }
 }
 
