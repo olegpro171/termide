@@ -68,35 +68,35 @@ impl HelpGenerator {
         let entries = vec![
             HelpEntry {
                 keys: Self::format_keys(&kb.save),
-                description: t.help_desc_save().to_string(),
+                description: t.help_desc_save_generic().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.view),
-                description: t.help_desc_view_file().to_string(),
+                description: t.help_desc_view_generic().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.edit_item),
-                description: t.help_desc_edit_file().to_string(),
+                description: t.help_desc_edit_generic().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.copy_item),
-                description: t.help_desc_copy().to_string(),
+                description: t.help_desc_copy_generic().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.move_item),
-                description: t.help_desc_move().to_string(),
+                description: t.help_desc_move_generic().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.create_item),
-                description: t.help_desc_create_dir().to_string(),
+                description: t.help_desc_create_generic().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.delete_item),
-                description: t.help_desc_delete().to_string(),
+                description: t.help_desc_delete_generic().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.context_menu),
-                description: t.help_desc_show_hover().to_string(),
+                description: t.help_desc_properties().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.search),
@@ -133,7 +133,7 @@ impl HelpGenerator {
         ];
 
         HelpSection {
-            header: "COMMON ACTIONS".to_string(),
+            header: t.help_section_universal().to_string(),
             entries,
         }
     }
@@ -198,11 +198,11 @@ impl HelpGenerator {
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.open_bookmark_add),
-                description: "Add bookmark".to_string(),
+                description: t.help_desc_open_bookmark_add().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.open_command_palette),
-                description: "Command palette".to_string(),
+                description: t.help_desc_command_palette().to_string(),
             },
         ];
 
@@ -389,11 +389,11 @@ impl HelpGenerator {
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.find_references),
-                description: "Find references".to_string(),
+                description: t.help_desc_find_references().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.rename_symbol),
-                description: "Rename symbol".to_string(),
+                description: t.help_desc_rename_symbol().to_string(),
             },
             HelpEntry {
                 keys: "Ctrl+←/→".to_string(),

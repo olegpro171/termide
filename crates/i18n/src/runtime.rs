@@ -340,6 +340,10 @@ impl Translation for RuntimeTranslation {
         self.get_string("help_desc_redo")
     }
 
+    fn help_section_universal(&self) -> &str {
+        self.get_string("help_section_universal")
+    }
+
     fn help_section_panels(&self) -> &str {
         self.get_string("help_section_panels")
     }
@@ -503,6 +507,54 @@ impl Translation for RuntimeTranslation {
 
     fn help_desc_goto_definition(&self) -> &str {
         self.get_string("help_desc_goto_definition")
+    }
+
+    fn help_desc_find_references(&self) -> &str {
+        self.get_string("help_desc_find_references")
+    }
+
+    fn help_desc_rename_symbol(&self) -> &str {
+        self.get_string("help_desc_rename_symbol")
+    }
+
+    fn help_desc_save_generic(&self) -> &str {
+        self.get_string("help_desc_save_generic")
+    }
+
+    fn help_desc_view_generic(&self) -> &str {
+        self.get_string("help_desc_view_generic")
+    }
+
+    fn help_desc_edit_generic(&self) -> &str {
+        self.get_string("help_desc_edit_generic")
+    }
+
+    fn help_desc_copy_generic(&self) -> &str {
+        self.get_string("help_desc_copy_generic")
+    }
+
+    fn help_desc_move_generic(&self) -> &str {
+        self.get_string("help_desc_move_generic")
+    }
+
+    fn help_desc_create_generic(&self) -> &str {
+        self.get_string("help_desc_create_generic")
+    }
+
+    fn help_desc_delete_generic(&self) -> &str {
+        self.get_string("help_desc_delete_generic")
+    }
+
+    fn help_desc_properties(&self) -> &str {
+        self.get_string("help_desc_properties")
+    }
+
+    fn help_desc_open_bookmark_add(&self) -> &str {
+        self.get_string("help_desc_open_bookmark_add")
+    }
+
+    fn help_desc_command_palette(&self) -> &str {
+        self.get_string("help_desc_command_palette")
     }
 
     fn help_desc_word_nav(&self) -> &str {
