@@ -8,8 +8,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use termide_config::{
-    Config, EditorKeybindings, FileManagerKeybindings, GlobalKeybindings, KeyBinding,
-    TerminalKeybindings,
+    Config, EditorKeybindings, GlobalKeybindings, KeyBinding, TerminalKeybindings,
 };
 use termide_i18n;
 use termide_theme::Theme;
@@ -39,10 +38,11 @@ impl HelpGenerator {
         let t = termide_i18n::t();
 
         vec![
+            Self::generate_common_actions_section(&config.general.keybindings, t),
             Self::generate_global_section(&config.general.keybindings, t),
             Self::generate_panel_section(&config.general.keybindings, t),
             Self::generate_navigation_section(t),
-            Self::generate_file_manager_section(&config.file_manager.keybindings, t),
+            Self::generate_file_manager_section(t),
             Self::generate_editor_section(&config.editor.keybindings, t),
             Self::generate_git_status_section(t),
             Self::generate_git_diff_section(t),
@@ -60,7 +60,85 @@ impl HelpGenerator {
         }
     }
 
-    /// Generate global keybindings section.
+    /// Generate common F-key and universal actions section.
+    fn generate_common_actions_section(
+        kb: &GlobalKeybindings,
+        t: &dyn termide_i18n::Translation,
+    ) -> HelpSection {
+        let entries = vec![
+            HelpEntry {
+                keys: Self::format_keys(&kb.save),
+                description: t.help_desc_save().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.view),
+                description: t.help_desc_view_file().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.edit_item),
+                description: t.help_desc_edit_file().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.copy_item),
+                description: t.help_desc_copy().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.move_item),
+                description: t.help_desc_move().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.create_item),
+                description: t.help_desc_create_dir().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.delete_item),
+                description: t.help_desc_delete().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.context_menu),
+                description: t.help_desc_show_hover().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.search),
+                description: t.help_desc_search().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.refresh),
+                description: t.help_desc_refresh().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.undo),
+                description: t.help_desc_undo().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.redo),
+                description: t.help_desc_redo().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.select_all),
+                description: t.help_desc_select_all().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.cut),
+                description: t.help_desc_cut_system().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.copy),
+                description: t.help_desc_copy_system().to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.paste),
+                description: t.help_desc_paste_system().to_string(),
+            },
+        ];
+
+        HelpSection {
+            header: "COMMON ACTIONS".to_string(),
+            entries,
+        }
+    }
+
+    /// Generate global keybindings section (app-level).
     fn generate_global_section(
         kb: &GlobalKeybindings,
         t: &dyn termide_i18n::Translation,
@@ -118,6 +196,14 @@ impl HelpGenerator {
                 keys: Self::format_keys(&kb.open_git_log),
                 description: t.help_desc_open_git_log().to_string(),
             },
+            HelpEntry {
+                keys: Self::format_keys(&kb.open_bookmark_add),
+                description: "Add bookmark".to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.open_command_palette),
+                description: "Command palette".to_string(),
+            },
         ];
 
         HelpSection {
@@ -133,8 +219,7 @@ impl HelpGenerator {
     ) -> HelpSection {
         let entries = vec![
             HelpEntry {
-                // Add static Escape to configurable close_panel binding
-                keys: format!("{} / Escape", Self::format_keys(&kb.close_panel)),
+                keys: Self::format_keys(&kb.close_panel),
                 description: t.help_desc_close_panel().to_string(),
             },
             HelpEntry {
@@ -194,77 +279,50 @@ impl HelpGenerator {
     }
 
     /// Generate file manager keybindings section.
-    fn generate_file_manager_section(
-        kb: &FileManagerKeybindings,
-        t: &dyn termide_i18n::Translation,
-    ) -> HelpSection {
+    fn generate_file_manager_section(t: &dyn termide_i18n::Translation) -> HelpSection {
         let entries = vec![
             HelpEntry {
-                keys: "C / F5".to_string(),
+                keys: "C".to_string(),
                 description: t.help_desc_copy().to_string(),
             },
             HelpEntry {
-                keys: "M / F6".to_string(),
+                keys: "M".to_string(),
                 description: t.help_desc_move().to_string(),
             },
             HelpEntry {
-                keys: "Delete / F8".to_string(),
-                description: t.help_desc_delete().to_string(),
-            },
-            HelpEntry {
-                keys: "R / F2".to_string(),
+                keys: "R".to_string(),
                 description: t.help_desc_rename().to_string(),
             },
             HelpEntry {
-                keys: "V / F3".to_string(),
+                keys: "V".to_string(),
                 description: t.help_desc_view_file().to_string(),
             },
             HelpEntry {
-                keys: "E / F4".to_string(),
+                keys: "E".to_string(),
                 description: t.help_desc_edit_file().to_string(),
             },
             HelpEntry {
-                keys: "F / Ctrl+N".to_string(),
+                keys: "F".to_string(),
                 description: t.help_desc_create_file().to_string(),
             },
             HelpEntry {
-                keys: "D / F7".to_string(),
+                keys: "D".to_string(),
                 description: t.help_desc_create_dir().to_string(),
             },
             HelpEntry {
-                keys: "Ctrl+F".to_string(),
-                description: t.help_desc_search().to_string(),
-            },
-            HelpEntry {
-                keys: Self::format_keys(&kb.search_content),
-                description: t.help_desc_search_content().to_string(),
-            },
-            HelpEntry {
-                keys: Self::format_keys(&kb.go_home),
-                description: t.help_desc_go_home().to_string(),
-            },
-            HelpEntry {
-                keys: "Backspace".to_string(),
-                description: t.help_desc_parent_dir().to_string(),
-            },
-            HelpEntry {
-                keys: "Ctrl+R".to_string(),
-                description: t.help_desc_refresh().to_string(),
-            },
-            HelpEntry {
-                keys: Self::format_keys(&kb.toggle_hidden),
-                description: t.help_desc_toggle_hidden().to_string(),
+                keys: "Space".to_string(),
+                description: t.help_desc_show_hover().to_string(),
             },
             HelpEntry {
                 keys: "Insert".to_string(),
                 description: t.help_desc_select().to_string(),
             },
             HelpEntry {
-                keys: "Ctrl+A".to_string(),
-                description: t.help_desc_select_all().to_string(),
+                keys: ".".to_string(),
+                description: t.help_desc_toggle_hidden().to_string(),
             },
             HelpEntry {
-                keys: Self::format_keys(&kb.open_external),
+                keys: "O".to_string(),
                 description: t.help_desc_open_external().to_string(),
             },
         ];
@@ -282,10 +340,6 @@ impl HelpGenerator {
     ) -> HelpSection {
         let entries = vec![
             HelpEntry {
-                keys: "F2 / Ctrl+S".to_string(),
-                description: t.help_desc_save().to_string(),
-            },
-            HelpEntry {
                 keys: Self::format_keys(&kb.save_as),
                 description: t.help_desc_save_as().to_string(),
             },
@@ -294,40 +348,12 @@ impl HelpGenerator {
                 description: t.help_desc_reload().to_string(),
             },
             HelpEntry {
-                keys: "Ctrl+Z".to_string(),
-                description: t.help_desc_undo().to_string(),
-            },
-            HelpEntry {
-                keys: "Ctrl+Y".to_string(),
-                description: t.help_desc_redo().to_string(),
-            },
-            HelpEntry {
-                keys: "Ctrl+C".to_string(),
-                description: t.help_desc_copy_system().to_string(),
-            },
-            HelpEntry {
-                keys: "Ctrl+X".to_string(),
-                description: t.help_desc_cut_system().to_string(),
-            },
-            HelpEntry {
-                keys: "Ctrl+V".to_string(),
-                description: t.help_desc_paste_system().to_string(),
-            },
-            HelpEntry {
-                keys: "Ctrl+A".to_string(),
-                description: t.help_desc_select_all().to_string(),
-            },
-            HelpEntry {
                 keys: Self::format_keys(&kb.duplicate_line),
                 description: t.help_desc_duplicate_line().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.toggle_comment),
                 description: t.help_desc_toggle_comment().to_string(),
-            },
-            HelpEntry {
-                keys: "Ctrl+F".to_string(),
-                description: t.help_desc_search().to_string(),
             },
             HelpEntry {
                 keys: Self::format_keys(&kb.search_next),
@@ -349,7 +375,6 @@ impl HelpGenerator {
                 keys: Self::format_keys(&kb.replace_all),
                 description: t.help_desc_replace_all().to_string(),
             },
-            // LSP
             HelpEntry {
                 keys: Self::format_keys(&kb.trigger_completion),
                 description: t.help_desc_trigger_completion().to_string(),
@@ -362,7 +387,14 @@ impl HelpGenerator {
                 keys: Self::format_keys(&kb.goto_definition),
                 description: t.help_desc_goto_definition().to_string(),
             },
-            // Word / paragraph navigation (non-configurable)
+            HelpEntry {
+                keys: Self::format_keys(&kb.find_references),
+                description: "Find references".to_string(),
+            },
+            HelpEntry {
+                keys: Self::format_keys(&kb.rename_symbol),
+                description: "Rename symbol".to_string(),
+            },
             HelpEntry {
                 keys: "Ctrl+←/→".to_string(),
                 description: t.help_desc_word_nav().to_string(),
@@ -370,18 +402,6 @@ impl HelpGenerator {
             HelpEntry {
                 keys: "Ctrl+↑/↓".to_string(),
                 description: t.help_desc_paragraph_nav().to_string(),
-            },
-            HelpEntry {
-                keys: "Enter".to_string(),
-                description: t.help_desc_accept_completion().to_string(),
-            },
-            HelpEntry {
-                keys: "Escape".to_string(),
-                description: t.help_desc_cancel_completion().to_string(),
-            },
-            HelpEntry {
-                keys: "↑ / ↓".to_string(),
-                description: t.help_desc_navigate_completion().to_string(),
             },
         ];
 
@@ -403,16 +423,8 @@ impl HelpGenerator {
                 description: t.help_desc_unstage_file().to_string(),
             },
             HelpEntry {
-                keys: "Ctrl+R".to_string(),
-                description: t.help_desc_refresh().to_string(),
-            },
-            HelpEntry {
-                keys: "Tab".to_string(),
-                description: t.help_desc_next_section().to_string(),
-            },
-            HelpEntry {
-                keys: "Shift+Tab".to_string(),
-                description: t.help_desc_prev_section().to_string(),
+                keys: "Space".to_string(),
+                description: t.help_desc_show_hover().to_string(),
             },
         ];
 
@@ -472,11 +484,7 @@ impl HelpGenerator {
                 description: t.help_desc_move_down().to_string(),
             },
             HelpEntry {
-                keys: "PgUp".to_string(),
-                description: t.help_desc_page_scroll().to_string(),
-            },
-            HelpEntry {
-                keys: "PgDn".to_string(),
+                keys: "PgUp / PgDn".to_string(),
                 description: t.help_desc_page_scroll().to_string(),
             },
             HelpEntry {
@@ -486,22 +494,6 @@ impl HelpGenerator {
             HelpEntry {
                 keys: "End / G".to_string(),
                 description: t.help_desc_end().to_string(),
-            },
-            HelpEntry {
-                keys: "Ctrl+U".to_string(),
-                description: t.help_desc_scroll_half_up().to_string(),
-            },
-            HelpEntry {
-                keys: "Ctrl+D".to_string(),
-                description: t.help_desc_scroll_half_down().to_string(),
-            },
-            HelpEntry {
-                keys: "Tab".to_string(),
-                description: t.help_desc_next_section().to_string(),
-            },
-            HelpEntry {
-                keys: "Shift+Tab".to_string(),
-                description: t.help_desc_prev_section().to_string(),
             },
         ];
 
@@ -523,8 +515,8 @@ impl HelpGenerator {
                 description: t.help_desc_open_file_editor().to_string(),
             },
             HelpEntry {
-                keys: "Ctrl+R".to_string(),
-                description: t.help_desc_refresh().to_string(),
+                keys: "Ctrl+U / Ctrl+D".to_string(),
+                description: t.help_desc_scroll_half_up().to_string(),
             },
         ];
 
@@ -540,6 +532,10 @@ impl HelpGenerator {
             HelpEntry {
                 keys: "Enter / d".to_string(),
                 description: t.help_desc_view_commit_diff().to_string(),
+            },
+            HelpEntry {
+                keys: "Space".to_string(),
+                description: t.help_desc_show_hover().to_string(),
             },
             HelpEntry {
                 keys: "o / Shift+Enter".to_string(),
@@ -569,7 +565,7 @@ impl HelpGenerator {
         let version = env!("CARGO_PKG_VERSION");
         let version_text = format!("Termide {}", version);
         let version_len = version_text.chars().count();
-        let side_padding = width.saturating_sub(version_len + 2) / 2; // +2 for spaces around text
+        let side_padding = width.saturating_sub(version_len + 2) / 2;
         let left_pad = "═".repeat(side_padding);
         let right_pad = "═".repeat(width.saturating_sub(side_padding + version_len + 2));
         lines.push(Line::styled(
@@ -583,7 +579,6 @@ impl HelpGenerator {
                 continue;
             }
 
-            // Calculate key column width based on content
             let max_keys_len = section
                 .entries
                 .iter()
@@ -592,7 +587,6 @@ impl HelpGenerator {
                 .unwrap_or(0)
                 .max(12);
 
-            // Header: ═══ HEADER ═══════════════════════
             let header_prefix = format!("═══ {} ", section.header);
             let prefix_len = header_prefix.chars().count();
             let padding = width.saturating_sub(prefix_len);
@@ -600,12 +594,12 @@ impl HelpGenerator {
                 format!("{}{}", header_prefix, "═".repeat(padding)),
                 header_style,
             ));
-
-            // Empty line after header
             lines.push(Line::from(""));
 
-            // Entry lines:   key              description
             for entry in &section.entries {
+                if entry.keys.is_empty() {
+                    continue; // skip entries with no binding
+                }
                 let keys_padded = Self::pad_string(&entry.keys, max_keys_len + 2);
                 lines.push(Line::from(vec![
                     Span::raw("  "),
@@ -614,7 +608,6 @@ impl HelpGenerator {
                 ]));
             }
 
-            // Empty line between sections
             lines.push(Line::from(""));
         }
 
