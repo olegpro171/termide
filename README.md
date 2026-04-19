@@ -28,7 +28,7 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 ## Features
 
 - **Terminal-based IDE** - Syntax highlighting for 21 languages, word navigation (Ctrl+Left/Right), paragraph/symbol navigation (Ctrl+Up/Down), toggle comment (Ctrl+/), auto-indentation, auto-close brackets
-- **LSP Support** - Code completion, Find References (Shift+F12), Rename Symbol (F2), Go to Definition (Ctrl+Click), diagnostics
+- **LSP Support** - Code completion, Find References (Shift+F12), Rename Symbol (F4), Go to Definition (Ctrl+Click), diagnostics
 - **Smart File Manager** - Tree view with expandable directories, nested git status, batch operations, file/content search (glob/regex), in-tree incremental search
 - **Integrated Terminal** - Full PTY support, VT100 escape sequences, mouse tracking
 - **Git Integration** - Status panel, commit log with ASCII graph, staging/unstaging, branch switching, stash management, inline blame (Alt+B)

@@ -350,7 +350,7 @@ Opens a dedicated References panel listing all locations where the symbol is use
 
 | Shortcut           | Action                                     |
 |-------------------|--------------------------------------------|
-| `F2`              | Rename symbol under cursor                 |
+| `F4`              | Rename symbol under cursor                 |
 
 Opens an input dialog to enter the new name. All occurrences across the project are updated via LSP WorkspaceEdit.
 
