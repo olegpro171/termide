@@ -793,7 +793,7 @@ impl App {
 
     /// Show error as InfoModal; fall back to status bar if a modal is already active.
     pub(crate) fn show_error_modal(&mut self, message: String) {
-        if self.state.active_modal.is_some() {
+        if self.state.has_modal() {
             self.state.set_error(message);
             return;
         }

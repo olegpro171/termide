@@ -33,9 +33,9 @@ impl App {
         }
 
         // Handle modal mouse events first if a modal is open
-        if self.state.active_modal.is_some() {
+        if self.state.has_modal() {
             // Indicator modals (menu-integrated): click anywhere closes and falls through
-            let is_indicator_modal = self.state.ui.menu_open
+            let is_indicator_modal = self.state.is_menu_open()
                 && (self.state.resource_modal_kind.is_some()
                     || matches!(self.state.active_modal, Some(ActiveModal::Calendar(_))));
 
@@ -131,7 +131,8 @@ impl App {
         }
 
         // If menu is open, close it on click outside menu
-        if self.state.ui.menu_open && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+        if self.state.is_menu_open()
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
         {
             self.state.close_menu();
             return Ok(());
@@ -406,7 +407,7 @@ impl App {
             let item_width = item.width() as u16;
             if x >= current_x && x < current_x + item_width {
                 // Toggle: if this menu item is already open, close it
-                if self.state.ui.menu_open && self.state.ui.selected_menu_item == Some(i) {
+                if self.state.is_menu_open() && self.state.ui.selected_menu_item == Some(i) {
                     // Restore theme if nested submenu was open
                     if let Some(original_name) = self.state.ui.theme_preview_original.take() {
                         self.state.theme = Theme::get_by_name(&original_name);
@@ -443,7 +444,7 @@ impl App {
 
         if let Some((index, anchor_x)) = indicator {
             // Toggle: if this indicator is already open, close it
-            if self.state.ui.menu_open && self.state.ui.selected_menu_item == Some(index) {
+            if self.state.is_menu_open() && self.state.ui.selected_menu_item == Some(index) {
                 self.state.close_indicator_modal();
                 self.state.close_menu();
                 return Ok(());
@@ -490,7 +491,7 @@ impl App {
             if x >= disk_start {
                 use termide_ui_render::INDICATOR_DISK_INDEX;
                 // Toggle: if this indicator is already open, close it
-                if self.state.ui.menu_open
+                if self.state.is_menu_open()
                     && self.state.ui.selected_menu_item == Some(INDICATOR_DISK_INDEX)
                 {
                     self.state.close_indicator_modal();

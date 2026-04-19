@@ -23,7 +23,7 @@ impl App {
         let params = MenuRenderParams {
             theme: self.state.theme,
             selected_menu_item: self.state.ui.selected_menu_item,
-            menu_open: self.state.ui.menu_open,
+            menu_open: self.state.is_menu_open(),
             cpu_usage: self.state.system_monitor.cpu_usage(),
             ram_percent: self.state.system_monitor.ram_usage_percent(),
             ram_value,

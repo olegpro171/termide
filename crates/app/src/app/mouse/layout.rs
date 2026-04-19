@@ -197,7 +197,7 @@ impl App {
         self.state.last_mouse_scroll = Some(std::time::Instant::now());
 
         // Skip scroll when modal is active
-        if self.state.active_modal.is_some() {
+        if self.state.has_modal() {
             return Ok(());
         }
 

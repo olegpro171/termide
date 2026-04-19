@@ -75,7 +75,7 @@ impl App {
 
         // Menu
         if table.matches("menu", key) {
-            if self.state.ui.menu_open {
+            if self.state.is_menu_open() {
                 self.state.close_menu();
             } else {
                 self.state.open_menu(Some(0));
@@ -214,7 +214,7 @@ impl App {
     pub(super) fn handle_app_action_by_name(&mut self, action: &str) -> Result<bool> {
         match action {
             "menu" => {
-                if self.state.ui.menu_open {
+                if self.state.is_menu_open() {
                     self.state.close_menu();
                 } else {
                     self.state.open_menu(Some(0));

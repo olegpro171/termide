@@ -13,6 +13,50 @@ use std::sync::Arc;
 use termide_i18n as i18n;
 
 impl App {
+    /// Force-save the active editor and handle the remote-upload / close flow.
+    ///
+    /// Returns `true` if the helper took ownership of the close flow (either
+    /// because an error was shown or an async upload was queued — in both
+    /// cases the caller should return immediately). Returns `false` for a
+    /// successful local save where the caller should proceed to close the
+    /// panel synchronously.
+    fn force_save_active_editor(&mut self) -> Result<bool> {
+        let editor_file_path = self
+            .layout_manager
+            .active_panel()
+            .and_then(|p| p.as_any().downcast_ref::<termide_panel_editor::Editor>())
+            .and_then(|e| e.file_path().map(|p| p.to_path_buf()));
+
+        let upload_info = {
+            let mut result = None;
+            if let Some(panel) = self.layout_manager.active_panel_mut() {
+                if let Some(editor) = panel.as_editor_mut() {
+                    match editor.force_save() {
+                        Err(e) => {
+                            log::error!("Force save error: {}", e);
+                            let t = i18n::t();
+                            self.show_error_modal(t.status_error_save(&e.to_string()));
+                            return Ok(true); // Error shown; caller returns.
+                        }
+                        Ok(Some(info)) => {
+                            result = Some(info);
+                        }
+                        Ok(None) => {}
+                    }
+                }
+            }
+            result
+        };
+
+        if let Some((temp_path, remote_path, vfs_manager)) = upload_info {
+            // Remote file — queue async upload; panel closes when upload completes.
+            self.queue_remote_editor_upload(temp_path, remote_path, vfs_manager, editor_file_path);
+            return Ok(true);
+        }
+
+        Ok(false) // Local save succeeded; caller should close the panel synchronously.
+    }
+
     /// Start an async upload of the editor's temp file to the remote path via
     /// `OperationManager`. If `close_after` is `Some(path)`, the editor panel
     /// with that file path will close once the upload completes (handled in
@@ -175,39 +219,7 @@ impl App {
             match selected {
                 0 => {
                     // Overwrite disk with current content
-                    let editor_file_path = self
-                        .layout_manager
-                        .active_panel()
-                        .and_then(|p| p.as_any().downcast_ref::<termide_panel_editor::Editor>())
-                        .and_then(|e| e.file_path().map(|p| p.to_path_buf()));
-                    let upload_info = {
-                        let mut result = None;
-                        if let Some(panel) = self.layout_manager.active_panel_mut() {
-                            if let Some(editor) = panel.as_editor_mut() {
-                                let t = i18n::t();
-                                match editor.force_save() {
-                                    Err(e) => {
-                                        log::error!("Force save error: {}", e);
-                                        self.show_error_modal(t.status_error_save(&e.to_string()));
-                                        return Ok(());
-                                    }
-                                    Ok(Some(info)) => {
-                                        result = Some(info);
-                                    }
-                                    Ok(None) => {}
-                                }
-                            }
-                        }
-                        result
-                    };
-                    if let Some((temp_path, remote_path, vfs_manager)) = upload_info {
-                        // Remote file — queue async upload; panel closes when upload completes.
-                        self.queue_remote_editor_upload(
-                            temp_path,
-                            remote_path,
-                            vfs_manager,
-                            editor_file_path,
-                        );
+                    if self.force_save_active_editor()? {
                         return Ok(());
                     }
                     self.close_panel_at_index();
@@ -248,39 +260,7 @@ impl App {
             match selected {
                 0 => {
                     // Overwrite disk with my changes
-                    let editor_file_path = self
-                        .layout_manager
-                        .active_panel()
-                        .and_then(|p| p.as_any().downcast_ref::<termide_panel_editor::Editor>())
-                        .and_then(|e| e.file_path().map(|p| p.to_path_buf()));
-                    let upload_info = {
-                        let mut result = None;
-                        if let Some(panel) = self.layout_manager.active_panel_mut() {
-                            if let Some(editor) = panel.as_editor_mut() {
-                                let t = i18n::t();
-                                match editor.force_save() {
-                                    Err(e) => {
-                                        log::error!("Force save error: {}", e);
-                                        self.show_error_modal(t.status_error_save(&e.to_string()));
-                                        return Ok(());
-                                    }
-                                    Ok(Some(info)) => {
-                                        result = Some(info);
-                                    }
-                                    Ok(None) => {}
-                                }
-                            }
-                        }
-                        result
-                    };
-                    if let Some((temp_path, remote_path, vfs_manager)) = upload_info {
-                        // Remote file — queue async upload; panel closes when upload completes.
-                        self.queue_remote_editor_upload(
-                            temp_path,
-                            remote_path,
-                            vfs_manager,
-                            editor_file_path,
-                        );
+                    if self.force_save_active_editor()? {
                         return Ok(());
                     }
                     self.close_panel_at_index();

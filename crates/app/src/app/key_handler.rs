@@ -60,7 +60,7 @@ impl App {
         }
 
         // If menu is open, handle menu navigation
-        if self.state.ui.menu_open {
+        if self.state.is_menu_open() {
             return self.handle_menu_key(key);
         }
 

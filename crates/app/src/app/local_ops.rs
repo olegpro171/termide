@@ -29,7 +29,7 @@ impl App {
             // Don't consume the pending batch if a user-interactive modal is open
             // (e.g. Conflict, RenamePattern). Only proceed when there's no modal
             // or it's a Progress modal (which is non-blocking for batch flow).
-            let has_blocking_modal = self.state.active_modal.is_some() && !has_progress_modal;
+            let has_blocking_modal = self.state.has_modal() && !has_progress_modal;
             if has_blocking_modal {
                 return;
             }
