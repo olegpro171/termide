@@ -233,7 +233,7 @@ impl SystemMonitor {
     /// Get top N processes by network activity (established connections), sorted descending.
     pub fn top_network_processes(&self, n: usize) -> Vec<NetworkProcessInfo> {
         let mut result = net_processes::collect();
-        result.sort_by(|a, b| b.connections.cmp(&a.connections));
+        result.sort_by_key(|p| std::cmp::Reverse(p.connections));
         result.truncate(n);
         result
     }

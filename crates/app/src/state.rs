@@ -886,7 +886,7 @@ impl AppState {
     /// Get operations list sorted by start time (newest first).
     pub fn operations_list(&self) -> Vec<&ActiveOperation> {
         let mut ops: Vec<_> = self.active_operations.values().collect();
-        ops.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        ops.sort_by_key(|op| std::cmp::Reverse(op.started_at));
         ops
     }
 
