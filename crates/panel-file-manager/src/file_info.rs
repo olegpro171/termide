@@ -79,14 +79,14 @@ impl FileManager {
             });
         }
 
-        // Local file handling
+        // Local file handling — use full_path so nested tree entries resolve correctly
         let file_path = if entry.name == ".." {
             self.current_path
                 .parent()
                 .unwrap_or(&self.current_path)
                 .to_path_buf()
         } else {
-            self.current_path.join(&entry.name)
+            te.full_path.clone()
         };
 
         let symlink_metadata = fs::symlink_metadata(&file_path).ok()?;
@@ -316,17 +316,27 @@ impl FileManager {
                 .unwrap_or_else(|| "Unknown".to_string());
 
             // Collect data without Name and Type
-            let mut data = vec![
-                (
-                    t.file_info_path().to_string(),
-                    termide_core::util::shorten_home_path(&file_path.display().to_string()),
-                ),
+            let mut data = vec![(
+                t.file_info_path().to_string(),
+                termide_core::util::shorten_home_path(&file_path.display().to_string()),
+            )];
+
+            if is_symlink {
+                if let Ok(target) = fs::read_link(&file_path) {
+                    data.push((
+                        t.file_info_target().to_string(),
+                        termide_core::util::shorten_home_path(&target.display().to_string()),
+                    ));
+                }
+            }
+
+            data.extend([
                 (t.file_info_size().to_string(), size),
                 (t.file_info_owner().to_string(), owner),
                 (t.file_info_group().to_string(), group),
                 (t.file_info_created().to_string(), created),
                 (t.file_info_modified().to_string(), modified),
-            ];
+            ]);
 
             // Add git status if in repository (filtered by specific file/directory)
             // Special case: if directory is itself a git repo root, show its git info

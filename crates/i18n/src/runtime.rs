@@ -1474,6 +1474,10 @@ impl Translation for RuntimeTranslation {
         self.get_string("file_info_path")
     }
 
+    fn file_info_target(&self) -> &str {
+        self.get_string("file_info_target")
+    }
+
     fn file_info_size(&self) -> &str {
         self.get_string("file_info_size")
     }

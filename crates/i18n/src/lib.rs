@@ -481,6 +481,7 @@ pub trait Translation: Send + Sync {
     fn file_info_title_directory(&self, name: &str) -> String;
     fn file_info_title_symlink(&self, name: &str) -> String;
     fn file_info_path(&self) -> &str;
+    fn file_info_target(&self) -> &str;
     fn file_info_size(&self) -> &str;
     fn file_info_owner(&self) -> &str;
     fn file_info_group(&self) -> &str;
