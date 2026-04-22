@@ -39,6 +39,29 @@ pub enum RamUnit {
     Megabytes,
 }
 
+/// Battery information.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatteryInfo {
+    /// State of charge, percentage in 0..=100.
+    pub percent: u8,
+    /// Whether AC power is connected (charging or full).
+    pub charging: bool,
+}
+
+/// Read battery information from the first available battery.
+/// Returns `None` if no battery is present or the platform backend fails.
+pub fn get_battery_info() -> Option<BatteryInfo> {
+    use starship_battery::{Manager, State};
+    let manager = Manager::new().ok()?;
+    let mut batteries = manager.batteries().ok()?;
+    let battery = batteries.next()?.ok()?;
+    let percent = (battery.state_of_charge().value * 100.0)
+        .round()
+        .clamp(0.0, 100.0) as u8;
+    let charging = !matches!(battery.state(), State::Discharging);
+    Some(BatteryInfo { percent, charging })
+}
+
 /// Network throughput state.
 struct NetworkState {
     networks: Networks,

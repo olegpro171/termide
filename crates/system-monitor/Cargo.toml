@@ -9,6 +9,7 @@ description = "System resource monitoring for termide"
 
 [dependencies]
 sysinfo.workspace = true
+starship-battery.workspace = true
 termide-i18n = { path = "../i18n" }
 
 [target.'cfg(unix)'.dependencies]

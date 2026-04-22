@@ -13,7 +13,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use termide_i18n as i18n;
-use termide_system_monitor::{format_net_speed, RamUnit};
+use termide_system_monitor::{format_net_speed, BatteryInfo, RamUnit};
 use termide_theme::Theme;
 use termide_ui::str_display_width;
 
@@ -30,6 +30,8 @@ pub struct MenuRenderParams<'a> {
     pub net_down_rate: u64,
     /// Network upload rate in bytes per second
     pub net_up_rate: u64,
+    /// Battery info, if available on this system
+    pub battery: Option<BatteryInfo>,
 }
 
 /// Get menu items with translations
@@ -127,6 +129,15 @@ pub fn get_menu_item_width(menu_index: usize) -> u16 {
         .unwrap_or(0)
 }
 
+/// Pick the battery indicator icon based on AC state.
+fn battery_icon(info: BatteryInfo) -> &'static str {
+    if info.charging {
+        "⚡"
+    } else {
+        "🔋"
+    }
+}
+
 /// Choose color indicator by load level
 /// < 50% - green (success)
 /// 50-75% - yellow (warning)
@@ -169,17 +180,22 @@ pub fn get_resource_indicator_ranges(
     let net_up_text = format!("↑{} ", format_net_speed(params.net_up_rate));
     let cpu_text = format!("CPU {}% ", params.cpu_usage);
     let ram_text = format!("RAM {}{} ", params.ram_value, ram_unit_str);
+    let battery_text = params
+        .battery
+        .map(|b| format!("{}{}% ", battery_icon(b), b.percent));
+    let battery_width = battery_text.as_deref().map(|s| s.width()).unwrap_or(0);
     let current_time = chrono::Local::now().format("%H:%M").to_string();
     let clock_text = format!(" {} ", current_time);
 
     // Calculate positions from the right side
-    // Layout order: ... [padding] [net_down] [net_up] [cpu] [ram] [clock]
+    // Layout order: ... [padding] [net_down] [net_up] [cpu] [ram] [battery?] [clock]
     let remaining = (area_width as usize).saturating_sub(
         used_width
             + net_down_text.width()
             + net_up_text.width()
             + cpu_text.width()
             + ram_text.width()
+            + battery_width
             + clock_text.width(),
     );
 
@@ -192,7 +208,7 @@ pub fn get_resource_indicator_ranges(
     let ram_start = cpu_end;
     let ram_end = ram_start + ram_text.width() as u16;
 
-    let clock_start = ram_end;
+    let clock_start = ram_end + battery_width as u16;
     let clock_end = clock_start + clock_text.width() as u16;
 
     (
@@ -243,6 +259,19 @@ pub fn render_menu(frame: &mut Frame, area: Rect, params: &MenuRenderParams) {
     let ram_text = format!("RAM {}{} ", params.ram_value, ram_unit_str);
     let ram_color = resource_color(params.ram_percent, params.theme);
 
+    // Battery indicator (only if a battery is present)
+    let battery_text = params
+        .battery
+        .map(|b| format!("{}{}% ", battery_icon(b), b.percent));
+    let battery_color = params.battery.map(|b| {
+        if b.charging {
+            params.theme.success
+        } else {
+            resource_color(100u8.saturating_sub(b.percent), params.theme)
+        }
+    });
+    let battery_width = battery_text.as_deref().map(|s| s.width()).unwrap_or(0);
+
     // Current time
     let current_time = Local::now().format("%H:%M").to_string();
     let clock_text = format!(" {} ", current_time);
@@ -255,6 +284,7 @@ pub fn render_menu(frame: &mut Frame, area: Rect, params: &MenuRenderParams) {
             + net_up_text.width()
             + cpu_text.width()
             + ram_text.width()
+            + battery_width
             + clock_text.width(),
     );
 
@@ -311,6 +341,11 @@ pub fn render_menu(frame: &mut Frame, area: Rect, params: &MenuRenderParams) {
 
     // Add RAM indicator
     spans.push(Span::styled(ram_text, ram_style));
+
+    // Add battery indicator (between RAM and clock) when available
+    if let (Some(text), Some(color)) = (battery_text, battery_color) {
+        spans.push(Span::styled(text, Style::default().fg(color)));
+    }
 
     // Add clock
     spans.push(Span::styled(clock_text, clock_style));
