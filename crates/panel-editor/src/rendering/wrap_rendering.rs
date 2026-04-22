@@ -7,7 +7,7 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use termide_buffer::{calculate_wrap_point, Cursor, TextBuffer, Viewport};
+use termide_buffer::{Cursor, TextBuffer, Viewport};
 use termide_git::GitDiffCache;
 use termide_highlight::LineHighlighter;
 use termide_theme::Theme;
@@ -16,6 +16,7 @@ use super::{
     context::RenderContext, cursor_renderer, deletion_markers, highlight_renderer, line_rendering,
 };
 use crate::git;
+use crate::word_wrap::get_line_wrap_points;
 
 /// Render editor content in word wrap mode.
 ///
@@ -66,10 +67,16 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
 
         if let Some(line_text) = buffer.line_cow(line_idx) {
             let line_text = line_text.trim_end_matches('\n');
-            let graphemes: Vec<&str> = line_text.graphemes(true).collect();
-            let line_len = graphemes.len();
+
+            // Compute wrap points once per physical line (O(n)) instead of
+            // running `calculate_wrap_point` O(n) for every visual row.
+            // `wrap_points` holds the grapheme index where each *next* visual
+            // row starts; the final chunk ends at `line_len`.
+            let (_, wrap_points) = get_line_wrap_points(line_text, content_width, use_smart_wrap);
+            let line_len = line_text.graphemes(true).count();
 
             let mut grapheme_offset = 0;
+            let mut wrap_idx = 0;
             let mut is_first_visual_row = skip_visual_rows == 0;
 
             // Special handling for empty lines
@@ -96,15 +103,10 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
                     visual_row += 1;
                 }
             } else {
-                // Handle non-empty lines with wrapping
-                // Calculate wrap points on the fly for each visual row
+                // Handle non-empty lines with wrapping using precomputed wrap points
                 while grapheme_offset < line_len && visual_row < content_height {
-                    let chunk_end = if use_smart_wrap {
-                        calculate_wrap_point(&graphemes, grapheme_offset, content_width, line_len)
-                    } else {
-                        // Simple wrap: calculate based on display width
-                        calculate_simple_wrap_point(&graphemes, grapheme_offset, content_width)
-                    };
+                    let chunk_end = wrap_points.get(wrap_idx).copied().unwrap_or(line_len);
+                    wrap_idx += 1;
 
                     // Skip visual rows if we have an offset (for within-line scrolling)
                     if skip_visual_rows > 0 {
@@ -456,21 +458,4 @@ fn render_visual_line<H: LineHighlighter>(
             }
         }
     }
-}
-
-/// Calculate simple wrap point based on display width (no word boundary detection)
-fn calculate_simple_wrap_point(graphemes: &[&str], start: usize, max_width: usize) -> usize {
-    let mut display_width = 0;
-
-    for (i, grapheme) in graphemes.iter().enumerate().skip(start) {
-        let grapheme_width = grapheme.width();
-
-        if display_width + grapheme_width > max_width {
-            return i;
-        }
-
-        display_width += grapheme_width;
-    }
-
-    graphemes.len()
 }
