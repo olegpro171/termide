@@ -505,6 +505,35 @@ impl App {
 
     /// Handle click on status bar (bottom row)
     fn handle_status_bar_click(&mut self, x: u16) -> Result<()> {
+        // Tab indicator click on an editor panel: open a modal to override
+        // tab_size for this editor only. Layout here mirrors
+        // `ui-render/src/status_bar.rs:305-317` exactly so the range stays
+        // accurate for every locale.
+        if let Some(panel) = self.layout_manager.active_panel() {
+            if let Some(editor) = panel.as_editor() {
+                let t = i18n::t();
+                let info = editor.get_editor_info();
+                let pos_label = format!(" {} ", t.status_pos());
+                let pos_value = format!("{}:{}", info.line, info.column);
+                let sep = t.ui_hint_separator();
+                let tab_label = format!("{}{} ", sep, t.status_tab());
+                let tab_value = info.tab_size.to_string();
+                let tab_start = (pos_label.width() + pos_value.width()) as u16;
+                let tab_end = tab_start + (tab_label.width() + tab_value.width()) as u16;
+                if (tab_start..tab_end).contains(&x) {
+                    let modal = modal::InputModal::with_default(
+                        t.status_tab_modal_title(),
+                        t.status_tab_modal_prompt(),
+                        tab_value,
+                    );
+                    self.state.pending_action = Some(PendingAction::ChangeEditorTabSize);
+                    self.state.active_modal = Some(ActiveModal::Input(Box::new(modal)));
+                    self.state.needs_redraw = true;
+                    return Ok(());
+                }
+            }
+        }
+
         // Check if disk indicator is present (right-aligned in status bar)
         // Disk indicator text is formatted as " DEVICE: used/totalGB (percent%) "
         // and is right-aligned, so it occupies the last N columns

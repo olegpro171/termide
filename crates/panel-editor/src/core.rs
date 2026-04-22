@@ -114,6 +114,12 @@ pub struct Editor {
     hotkeys: HotkeyTable,
     /// Pointer of the last Arc<Config> used to build hotkeys (skip rebuild when unchanged)
     last_config_ptr: usize,
+
+    /// Per-editor tab_size override set at runtime (e.g. from the status bar
+    /// Tab indicator modal). When `Some`, it wins over `config.editor.tab_size`
+    /// on every `prepare_render` so the global config resync doesn't clobber
+    /// it. `None` means "follow the global setting".
+    tab_size_override: Option<usize>,
 }
 
 impl Editor {
@@ -158,6 +164,7 @@ impl Editor {
             is_stale: false,
             hotkeys: HotkeyTable::default(),
             last_config_ptr: 0,
+            tab_size_override: None,
         }
     }
 
@@ -618,6 +625,7 @@ impl Editor {
             is_stale: false,
             hotkeys: HotkeyTable::default(),
             last_config_ptr: 0,
+            tab_size_override: None,
         })
     }
 
@@ -656,6 +664,7 @@ impl Editor {
             is_stale: false,
             hotkeys: HotkeyTable::default(),
             last_config_ptr: 0,
+            tab_size_override: None,
         }
     }
 
@@ -1684,7 +1693,10 @@ impl Panel for Editor {
         // Sync EditorConfig with global Config.editor settings
         // This ensures runtime config changes are applied to the editor
         self.config.word_wrap = config.editor.word_wrap;
-        self.config.tab_size = config.editor.tab_size;
+        // Per-editor tab_size override wins over the global config, so a user
+        // picking a different size via the status bar survives the per-frame
+        // resync.
+        self.config.tab_size = self.tab_size_override.unwrap_or(config.editor.tab_size);
         self.config.auto_indent = config.editor.auto_indent;
         self.config.auto_close_brackets = config.editor.auto_close_brackets;
         self.git.blame_enabled = config.editor.show_blame;
@@ -2108,6 +2120,17 @@ impl Editor {
     /// Set pending remote open operation.
     pub fn set_pending_remote_open(&mut self, pending: crate::remote::PendingRemoteOpen) {
         self.pending_remote_open = Some(pending);
+    }
+
+    /// Get the per-editor tab_size override, if any.
+    pub fn tab_size_override(&self) -> Option<usize> {
+        self.tab_size_override
+    }
+
+    /// Set (or clear with `None`) the per-editor tab_size override.
+    /// Applied on the next `prepare_render`.
+    pub fn set_tab_size_override(&mut self, v: Option<usize>) {
+        self.tab_size_override = v;
     }
 }
 

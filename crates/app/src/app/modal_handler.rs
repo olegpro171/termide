@@ -5,6 +5,7 @@ use crossterm::event::KeyCode;
 
 use super::App;
 use crate::state::ActiveModal;
+use crate::PanelExt;
 use termide_modal::ModalResult;
 use termide_ui::path_utils;
 
@@ -306,6 +307,18 @@ impl App {
                     // ReplaceModal is handled entirely through handle_replace_action
                     // called from handle_modal_key/handle_modal_mouse (lines 183-233, 383-434).
                     // No additional processing needed here, similar to how SearchModal works.
+                }
+                PendingAction::ChangeEditorTabSize => {
+                    if let Some(text) = value.downcast_ref::<String>() {
+                        if let Ok(n) = text.trim().parse::<usize>() {
+                            let n = n.clamp(1, 16);
+                            if let Some(panel) = self.layout_manager.active_panel_mut() {
+                                if let Some(editor) = panel.as_editor_mut() {
+                                    editor.set_tab_size_override(Some(n));
+                                }
+                            }
+                        }
+                    }
                 }
                 PendingAction::QuitApplication => {
                     // User confirmed quit - exit application

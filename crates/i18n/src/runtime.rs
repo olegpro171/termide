@@ -1390,6 +1390,14 @@ impl Translation for RuntimeTranslation {
         self.get_string("status_tab")
     }
 
+    fn status_tab_modal_title(&self) -> &str {
+        self.get_string("status_tab_modal_title")
+    }
+
+    fn status_tab_modal_prompt(&self) -> &str {
+        self.get_string("status_tab_modal_prompt")
+    }
+
     fn status_plain_text(&self) -> &str {
         self.get_string("status_plain_text")
     }
