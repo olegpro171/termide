@@ -863,7 +863,7 @@ fn char_width_raw_cjk(c: char) -> i8 {
 /// Returns the [UAX #11](https://www.unicode.org/reports/tr11/) based width of `c`, or
 /// `None` if `c` is a control character. Ambiguous width characters treated as narrow.
 #[inline]
-pub fn single_char_width(c: char) -> Option<usize> {
+pub(crate) fn single_char_width(c: char) -> Option<usize> {
     match char_width_raw(c) {
         -1 => None,
         w => Some(w as usize),
@@ -874,7 +874,7 @@ pub fn single_char_width(c: char) -> Option<usize> {
 /// `None` if `c` is a control character. Ambiguous width characters treated as wide (CJK).
 #[cfg(feature = "cjk")]
 #[inline]
-pub fn single_char_width_cjk(c: char) -> Option<usize> {
+pub(crate) fn single_char_width_cjk(c: char) -> Option<usize> {
     match char_width_raw_cjk(c) {
         -1 => None,
         w => Some(w as usize),
@@ -884,7 +884,7 @@ pub fn single_char_width_cjk(c: char) -> Option<usize> {
 /// Returns the [UAX #11](https://www.unicode.org/reports/tr11/) based width of `s`.
 /// Ambiguous width characters treated as narrow.
 #[inline]
-pub fn str_width(s: &str) -> usize {
+pub(crate) fn str_width(s: &str) -> usize {
     s.chars().map(|c| char_width_raw(c).max(0) as usize).sum()
 }
 
@@ -892,7 +892,7 @@ pub fn str_width(s: &str) -> usize {
 /// Ambiguous width characters treated as wide (CJK context).
 #[cfg(feature = "cjk")]
 #[inline]
-pub fn str_width_cjk(s: &str) -> usize {
+pub(crate) fn str_width_cjk(s: &str) -> usize {
     s.chars()
         .map(|c| char_width_raw_cjk(c).max(0) as usize)
         .sum()
