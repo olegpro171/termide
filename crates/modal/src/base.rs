@@ -404,6 +404,23 @@ pub trait CursorNavigation {
     }
 }
 
+/// Convert a screen X-offset inside a rendered single-line input field to
+/// the corresponding character (grapheme-agnostic, char-wise) position in
+/// `text`, accounting for double-width characters. Click past the end of
+/// the text returns the text length.
+pub fn screen_x_to_char_pos(text: &str, screen_x: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    let mut width = 0;
+    for (i, c) in text.chars().enumerate() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(1);
+        if width + cw > screen_x {
+            return i;
+        }
+        width += cw;
+    }
+    text.chars().count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

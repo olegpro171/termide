@@ -10,6 +10,7 @@ use ratatui::{
 
 use termide_theme::Theme;
 
+use crate::base::screen_x_to_char_pos;
 use crate::{base, Modal, ModalResult, TextInputHandler};
 
 /// Replace modal result
@@ -352,20 +353,6 @@ impl Modal for ReplaceModal {
 
         Ok(None)
     }
-}
-
-/// Convert screen X position to character position in text.
-fn screen_x_to_char_pos(text: &str, screen_x: usize) -> usize {
-    use unicode_width::UnicodeWidthChar;
-    let mut width = 0;
-    for (i, c) in text.chars().enumerate() {
-        let cw = UnicodeWidthChar::width(c).unwrap_or(1);
-        if width + cw > screen_x {
-            return i;
-        }
-        width += cw;
-    }
-    text.chars().count() // Click past end = cursor at end
 }
 
 impl ReplaceModal {

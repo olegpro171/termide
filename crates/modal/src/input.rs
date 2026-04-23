@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-use crate::base::{button_style, render_input_field, render_modal_block};
+use crate::base::{button_style, render_input_field, render_modal_block, screen_x_to_char_pos};
 use crate::input_keys::{handle_input_key, InputKeyResult};
 
 use termide_config::constants::MODAL_BUTTON_SPACING;
@@ -538,18 +538,4 @@ impl Modal for InputModal {
         self.input_handler.paste(text);
         true
     }
-}
-
-/// Convert screen X position to character position in text.
-fn screen_x_to_char_pos(text: &str, screen_x: usize) -> usize {
-    use unicode_width::UnicodeWidthChar;
-    let mut width = 0;
-    for (i, c) in text.chars().enumerate() {
-        let cw = UnicodeWidthChar::width(c).unwrap_or(1);
-        if width + cw > screen_x {
-            return i;
-        }
-        width += cw;
-    }
-    text.chars().count() // Click past end = cursor at end
 }
