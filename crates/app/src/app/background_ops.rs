@@ -61,6 +61,17 @@ impl App {
         }
     }
 
+    /// Check for completed async directory reloads (watcher-triggered).
+    pub(super) fn check_fm_async_reload(&mut self) {
+        for panel in self.layout_manager.iter_all_panels_mut() {
+            if let Some(fm) = panel.as_file_manager_mut() {
+                if fm.check_async_reload() {
+                    self.state.needs_redraw = true;
+                }
+            }
+        }
+    }
+
     /// Check and apply pending git diff updates (debounced) and async git diff results.
     /// Runs for all panels because CheckGitDiffReceiver is a cheap try_recv
     /// that must be drained to avoid stale receivers in collapsed panels.

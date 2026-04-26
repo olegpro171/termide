@@ -184,6 +184,8 @@ pub struct FileManager {
     hotkeys: HotkeyTable,
     /// Pointer of the last Arc<Config> used to build hotkeys (skip rebuild when unchanged)
     last_config_ptr: usize,
+    /// Background directory reload result (watcher-triggered, non-blocking).
+    async_reload_receiver: Option<mpsc::Receiver<AsyncDirReloadResult>>,
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +222,103 @@ impl FileEntry {
             modified: entry.metadata.modified,
         }
     }
+}
+
+/// Result of a background directory reload.
+struct AsyncDirReloadResult {
+    path: PathBuf,
+    entries: Vec<FileEntry>,
+}
+
+/// Standalone directory reader that can run in a background thread.
+/// Takes all needed parameters by value to avoid borrowing issues.
+fn read_dir_entries_standalone(
+    dir_path: &std::path::Path,
+    rel_prefix: &str,
+    show_hidden: bool,
+    git_status_cache: Option<&GitStatusCache>,
+) -> Vec<FileEntry> {
+    let mut entries = Vec::new();
+
+    if let Ok(read_dir) = fs::read_dir(dir_path) {
+        for entry in read_dir.flatten() {
+            if let Ok(metadata) = entry.metadata() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+
+                if !show_hidden && name.starts_with('.') {
+                    continue;
+                }
+
+                let is_symlink = if let Ok(link_metadata) = fs::symlink_metadata(entry.path()) {
+                    link_metadata.is_symlink()
+                } else {
+                    false
+                };
+
+                let is_dir = if is_symlink {
+                    fs::metadata(entry.path())
+                        .map(|m| m.is_dir())
+                        .unwrap_or(false)
+                } else {
+                    metadata.is_dir()
+                };
+
+                let git_name = if rel_prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{rel_prefix}/{name}")
+                };
+
+                let git_status = if is_dir {
+                    git_status_cache
+                        .map(|cache| cache.get_directory_status(&git_name))
+                        .unwrap_or(GitStatus::Unmodified)
+                } else {
+                    git_status_cache
+                        .map(|cache| cache.get_status(&git_name))
+                        .unwrap_or(GitStatus::Unmodified)
+                };
+
+                #[cfg(unix)]
+                let is_executable = {
+                    use std::os::unix::fs::PermissionsExt;
+                    metadata.permissions().mode() & 0o111 != 0
+                };
+                #[cfg(not(unix))]
+                let is_executable = false;
+
+                #[cfg(unix)]
+                let is_readonly = {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = metadata.permissions().mode();
+                    (mode & 0o200) == 0
+                };
+                #[cfg(not(unix))]
+                let is_readonly = metadata.permissions().readonly();
+
+                let size = if metadata.is_file() {
+                    Some(metadata.len())
+                } else {
+                    None
+                };
+                let modified = metadata.modified().ok();
+
+                entries.push(FileEntry {
+                    name,
+                    is_dir,
+                    is_symlink,
+                    is_executable,
+                    is_readonly,
+                    git_status,
+                    size,
+                    modified,
+                });
+            }
+        }
+    }
+
+    sort_entries(&mut entries);
+    entries
 }
 
 impl FileManager {
@@ -302,6 +401,7 @@ impl FileManager {
             file_search: None,
             hotkeys: HotkeyTable::default(),
             last_config_ptr: 0,
+            async_reload_receiver: None,
         };
         let _ = fm.load_directory();
         fm
@@ -345,6 +445,7 @@ impl FileManager {
             file_search: None,
             hotkeys: HotkeyTable::default(),
             last_config_ptr: 0,
+            async_reload_receiver: None,
         };
 
         // Start the directory listing operation for remote paths
@@ -637,6 +738,75 @@ impl FileManager {
         self.load_directory_inner(true)
     }
 
+    /// Start a background directory reload (for watcher-triggered updates).
+    /// Reads directory entries in a background thread to avoid blocking the
+    /// main tick loop. Call `check_async_reload()` on each tick to apply results.
+    fn start_async_reload(&mut self) {
+        const RELOAD_DEBOUNCE_MS: u128 = 300;
+        if !self.navigation.should_reload(RELOAD_DEBOUNCE_MS) {
+            return;
+        }
+        // Don't overlap with an existing async reload
+        if self.async_reload_receiver.is_some() {
+            return;
+        }
+        let dir_path = self.current_path.clone();
+        let show_hidden = self.show_hidden;
+        let git_cache = self.git_status_cache.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let entries =
+                read_dir_entries_standalone(&dir_path, "", show_hidden, git_cache.as_ref());
+            let _ = tx.send(AsyncDirReloadResult {
+                path: dir_path,
+                entries,
+            });
+        });
+        self.async_reload_receiver = Some(rx);
+    }
+
+    /// Check if a background directory reload has completed and apply the result.
+    /// Returns `true` if entries were updated.
+    pub fn check_async_reload(&mut self) -> bool {
+        let result = self
+            .async_reload_receiver
+            .take_if(|rx| rx.try_recv().is_ok());
+        let Some(rx) = result else { return false };
+        let result = rx.try_recv().unwrap();
+        self.async_reload_receiver = None;
+
+        if result.path != self.current_path {
+            return false; // Stale result — user navigated away
+        }
+
+        // Build entries with ".." prefix
+        let mut entries = Vec::new();
+        if self.current_path.parent().is_some() {
+            entries.push(FileEntry {
+                name: "..".to_string(),
+                is_dir: true,
+                is_symlink: false,
+                is_executable: false,
+                is_readonly: false,
+                git_status: GitStatus::Unmodified,
+                size: None,
+                modified: None,
+            });
+        }
+        entries.extend(result.entries);
+
+        // Preserve cursor
+        let current_name = self.entry_at(self.selected).map(|e| e.name.clone());
+        let previous_scroll_offset = self.scroll_offset;
+
+        self.tree_entries = self.build_top_level_tree(entries);
+        self.load_expanded_subtrees();
+        self.recompute_visible();
+        self.restore_cursor(current_name, self.selected, previous_scroll_offset);
+
+        true
+    }
+
     /// Build top-level `tree_entries` from a sorted list of `FileEntry`.
     fn build_top_level_tree(&self, entries: Vec<FileEntry>) -> Vec<tree::TreeEntry> {
         entries
@@ -673,93 +843,12 @@ impl FileManager {
         dir_path: &std::path::Path,
         rel_prefix: &str,
     ) -> Result<Vec<FileEntry>> {
-        let mut entries = Vec::new();
-
-        if let Ok(read_dir) = fs::read_dir(dir_path) {
-            for entry in read_dir.flatten() {
-                if let Ok(metadata) = entry.metadata() {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-
-                    if !self.show_hidden && name.starts_with('.') {
-                        continue;
-                    }
-
-                    let is_symlink = if let Ok(link_metadata) = fs::symlink_metadata(entry.path()) {
-                        link_metadata.is_symlink()
-                    } else {
-                        false
-                    };
-
-                    let is_dir = if is_symlink {
-                        fs::metadata(entry.path())
-                            .map(|m| m.is_dir())
-                            .unwrap_or(false)
-                    } else {
-                        metadata.is_dir()
-                    };
-
-                    // Build git-relative name: for top-level entries just the name,
-                    // for nested entries: "subdir/name"
-                    let git_name = if rel_prefix.is_empty() {
-                        name.clone()
-                    } else {
-                        format!("{rel_prefix}/{name}")
-                    };
-
-                    let git_status = if is_dir {
-                        self.git_status_cache
-                            .as_ref()
-                            .map(|cache| cache.get_directory_status(&git_name))
-                            .unwrap_or(GitStatus::Unmodified)
-                    } else {
-                        self.git_status_cache
-                            .as_ref()
-                            .map(|cache| cache.get_status(&git_name))
-                            .unwrap_or(GitStatus::Unmodified)
-                    };
-
-                    #[cfg(unix)]
-                    let is_executable = {
-                        use std::os::unix::fs::PermissionsExt;
-                        metadata.permissions().mode() & 0o111 != 0
-                    };
-                    #[cfg(not(unix))]
-                    let is_executable = false;
-
-                    #[cfg(unix)]
-                    let is_readonly = {
-                        use std::os::unix::fs::PermissionsExt;
-                        let mode = metadata.permissions().mode();
-                        (mode & 0o200) == 0
-                    };
-                    #[cfg(not(unix))]
-                    let is_readonly = metadata.permissions().readonly();
-
-                    let size = if metadata.is_file() {
-                        Some(metadata.len())
-                    } else {
-                        None
-                    };
-                    let modified = metadata.modified().ok();
-
-                    entries.push(FileEntry {
-                        name,
-                        is_dir,
-                        is_symlink,
-                        is_executable,
-                        is_readonly,
-                        git_status,
-                        size,
-                        modified,
-                    });
-                }
-            }
-        } else {
-            log::warn!("Failed to read directory: {}", dir_path.display());
-        }
-
-        sort_entries(&mut entries);
-        Ok(entries)
+        Ok(read_dir_entries_standalone(
+            dir_path,
+            rel_prefix,
+            self.show_hidden,
+            self.git_status_cache.as_ref(),
+        ))
     }
 
     /// Restore cursor position after entries reload.
@@ -1497,7 +1586,7 @@ impl Panel for FileManager {
                 };
 
                 if should_reload {
-                    let _ = self.reload_directory();
+                    self.start_async_reload();
                     return CommandResult::NeedsRedraw(true);
                 }
                 CommandResult::NeedsRedraw(false)
@@ -1518,7 +1607,7 @@ impl Panel for FileManager {
                         .any(|p| git_root.starts_with(p) || p.starts_with(git_root));
                     if should_update {
                         // Reload directory to pick up new/deleted files and git status
-                        let _ = self.reload_directory();
+                        self.start_async_reload();
                         return CommandResult::NeedsRedraw(true);
                     }
                 }
