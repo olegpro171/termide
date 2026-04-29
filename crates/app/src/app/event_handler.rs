@@ -131,7 +131,7 @@ impl App {
 
             // === Events not yet implemented ===
             PanelEvent::NeedsRedraw => {
-                // UI will redraw on next frame anyway
+                self.state.needs_redraw = true;
             }
 
             PanelEvent::Quit => {

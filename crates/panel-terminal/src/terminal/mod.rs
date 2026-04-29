@@ -74,6 +74,17 @@ pub enum MouseTrackingMode {
     AnyEvent,    // ?1003 - all movements
 }
 
+/// Keyboard protocol mode negotiated by the inner application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyboardProtocolMode {
+    /// Traditional xterm-compatible key encoding.
+    Legacy,
+    /// Kitty/CSI-u compatibility mode enabled via `CSI > 1 u`.
+    CsiUCompat,
+    /// xterm modifyOtherKeys mode 2 enabled via `CSI > 4 ; 2 m`.
+    ModifyOtherKeys2,
+}
+
 /// Terminal cell containing a character and its style
 #[derive(Clone, Debug, Copy)]
 pub struct Cell {
@@ -174,6 +185,10 @@ pub struct TerminalScreen {
     pub sgr_mouse_mode: bool,
     /// Bracketed paste mode (?2004)
     pub bracketed_paste_mode: bool,
+    /// Focus event reporting (?1004)
+    pub focus_reporting: bool,
+    /// Negotiated keyboard protocol mode for inner apps
+    pub keyboard_protocol: KeyboardProtocolMode,
     /// Text selection start (row, col)
     pub selection_start: Option<(usize, usize)>,
     /// Text selection end (row, col)
@@ -235,6 +250,8 @@ impl TerminalScreen {
             mouse_tracking: MouseTrackingMode::None,
             sgr_mouse_mode: false,
             bracketed_paste_mode: false,
+            focus_reporting: false,
+            keyboard_protocol: KeyboardProtocolMode::Legacy,
             selection_start: None,
             selection_end: None,
             scrollback: std::collections::VecDeque::new(),

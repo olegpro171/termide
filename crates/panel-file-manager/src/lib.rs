@@ -1649,6 +1649,7 @@ impl Panel for FileManager {
             | PanelCommand::CheckGitDiffReceiver
             | PanelCommand::CheckExternalModification
             | PanelCommand::Resize { .. }
+            | PanelCommand::SetHostFocus { .. }
             | PanelCommand::GetModificationStatus
             | PanelCommand::Save
             | PanelCommand::CloseWithoutSaving

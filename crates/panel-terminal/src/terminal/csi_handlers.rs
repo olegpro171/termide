@@ -80,6 +80,12 @@ pub fn handle_private_sequence(screen: &mut TerminalScreen, params: &Params, c: 
         (1003, 'l') => {
             screen.mouse_tracking = MouseTrackingMode::None;
         }
+        (1004, 'h') => {
+            screen.focus_reporting = true;
+        }
+        (1004, 'l') => {
+            screen.focus_reporting = false;
+        }
         (1006, 'h') => {
             screen.sgr_mouse_mode = true;
         }

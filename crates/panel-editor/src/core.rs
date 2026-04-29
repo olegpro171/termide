@@ -2006,6 +2006,7 @@ impl Panel for Editor {
             // Commands not applicable to Editor
             PanelCommand::SetFsWatchRoot { .. }
             | PanelCommand::Resize { .. }
+            | PanelCommand::SetHostFocus { .. }
             | PanelCommand::RefreshDirectory
             | PanelCommand::SetGitOperationInProgress { .. }
             | PanelCommand::UpdateRepoPaths { .. } => CommandResult::None,

@@ -31,7 +31,7 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
-use terminal::{Cell, CellStyle, MouseTrackingMode, TerminalScreen};
+use terminal::{Cell, CellStyle, KeyboardProtocolMode, MouseTrackingMode, TerminalScreen};
 use vte::Parser;
 
 use termide_config::{Config, TerminalKeybindings};
@@ -49,12 +49,14 @@ struct TerminalSearchState {
     current_match: Option<usize>,
 }
 
+type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+
 /// Full-featured terminal with PTY
 pub struct Terminal {
     /// PTY master (wrapped in Arc<Mutex<>> for shared access)
     pty: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     /// Writer for writing to PTY
-    writer: Box<dyn Write + Send>,
+    writer: SharedWriter,
     /// Shell process
     child: Box<dyn Child + Send>,
     /// Shell process PID
@@ -132,6 +134,187 @@ fn arrow_modifier_param(mods: KeyModifiers) -> Option<u8> {
     }
 }
 
+fn keyboard_modifier_param(mods: KeyModifiers) -> u8 {
+    let mut value = 1;
+    if mods.contains(KeyModifiers::SHIFT) {
+        value += 1;
+    }
+    if mods.contains(KeyModifiers::ALT) {
+        value += 2;
+    }
+    if mods.contains(KeyModifiers::CONTROL) {
+        value += 4;
+    }
+    if mods.contains(KeyModifiers::SUPER) {
+        value += 8;
+    }
+    value
+}
+
+fn encode_csi_u(codepoint: u32, mods: KeyModifiers) -> Vec<u8> {
+    if mods.is_empty() {
+        format!("\x1b[{codepoint}u").into_bytes()
+    } else {
+        format!("\x1b[{codepoint};{}u", keyboard_modifier_param(mods)).into_bytes()
+    }
+}
+
+fn modern_key_bytes(key: &KeyEvent, mode: KeyboardProtocolMode) -> Option<Vec<u8>> {
+    match key.code {
+        KeyCode::Char(c) => match mode {
+            KeyboardProtocolMode::Legacy => None,
+            KeyboardProtocolMode::CsiUCompat => {
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
+                    None
+                } else {
+                    Some(encode_csi_u(c as u32, key.modifiers))
+                }
+            }
+            KeyboardProtocolMode::ModifyOtherKeys2 => {
+                if key.modifiers.is_empty() {
+                    None
+                } else {
+                    Some(encode_csi_u(c as u32, key.modifiers))
+                }
+            }
+        },
+        KeyCode::Enter => {
+            if key.modifiers.is_empty() || mode == KeyboardProtocolMode::Legacy {
+                None
+            } else {
+                Some(encode_csi_u(13, key.modifiers))
+            }
+        }
+        KeyCode::Tab => {
+            if key.modifiers.is_empty() || mode == KeyboardProtocolMode::Legacy {
+                None
+            } else {
+                Some(encode_csi_u(9, key.modifiers))
+            }
+        }
+        KeyCode::Backspace => {
+            if key.modifiers.is_empty() || mode == KeyboardProtocolMode::Legacy {
+                None
+            } else {
+                Some(encode_csi_u(127, key.modifiers))
+            }
+        }
+        KeyCode::Esc => {
+            if key.modifiers.is_empty() || mode == KeyboardProtocolMode::Legacy {
+                None
+            } else {
+                Some(encode_csi_u(27, key.modifiers))
+            }
+        }
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MouseRoute {
+    LocalSelection,
+    LocalScrollback,
+    Pty,
+    Ignore,
+}
+
+fn mouse_modifier_bits(mods: KeyModifiers) -> u8 {
+    let mut bits = 0;
+    if mods.contains(KeyModifiers::SHIFT) {
+        bits |= 4;
+    }
+    if mods.contains(KeyModifiers::ALT) {
+        bits |= 8;
+    }
+    if mods.contains(KeyModifiers::CONTROL) {
+        bits |= 16;
+    }
+    bits
+}
+
+fn can_send_mouse_event(kind: crossterm::event::MouseEventKind, mode: MouseTrackingMode) -> bool {
+    use crossterm::event::MouseEventKind;
+
+    match kind {
+        MouseEventKind::Down(_) | MouseEventKind::Up(_) => mode != MouseTrackingMode::None,
+        MouseEventKind::Drag(_) => {
+            matches!(
+                mode,
+                MouseTrackingMode::ButtonEvent | MouseTrackingMode::AnyEvent
+            )
+        }
+        MouseEventKind::Moved => mode == MouseTrackingMode::AnyEvent,
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => mode != MouseTrackingMode::None,
+        _ => false,
+    }
+}
+
+fn mouse_route(
+    kind: crossterm::event::MouseEventKind,
+    is_inside: bool,
+    selection_active: bool,
+    mouse_tracking: MouseTrackingMode,
+    alt_pressed: bool,
+) -> MouseRoute {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    match kind {
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+            if mouse_tracking == MouseTrackingMode::None {
+                MouseRoute::LocalScrollback
+            } else if is_inside {
+                MouseRoute::Pty
+            } else {
+                MouseRoute::Ignore
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if !is_inside {
+                MouseRoute::Ignore
+            } else if mouse_tracking != MouseTrackingMode::None && !alt_pressed {
+                MouseRoute::Pty
+            } else {
+                MouseRoute::LocalSelection
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if selection_active {
+                MouseRoute::LocalSelection
+            } else if !is_inside {
+                MouseRoute::Ignore
+            } else if mouse_tracking != MouseTrackingMode::None && !alt_pressed {
+                MouseRoute::Pty
+            } else {
+                MouseRoute::LocalSelection
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            if selection_active {
+                MouseRoute::LocalSelection
+            } else if is_inside && mouse_tracking != MouseTrackingMode::None && !alt_pressed {
+                MouseRoute::Pty
+            } else {
+                MouseRoute::Ignore
+            }
+        }
+        MouseEventKind::Down(_) | MouseEventKind::Up(_) | MouseEventKind::Drag(_) => {
+            if is_inside && mouse_tracking != MouseTrackingMode::None {
+                MouseRoute::Pty
+            } else {
+                MouseRoute::Ignore
+            }
+        }
+        MouseEventKind::Moved => {
+            if is_inside && mouse_tracking == MouseTrackingMode::AnyEvent {
+                MouseRoute::Pty
+            } else {
+                MouseRoute::Ignore
+            }
+        }
+        _ => MouseRoute::Ignore,
+    }
+}
+
 /// Build HotkeyTable for the terminal panel from config.
 fn build_terminal_hotkey_table(config: &Config) -> HotkeyTable {
     let mut t = HotkeyTable::new();
@@ -181,6 +364,7 @@ impl Terminal {
     /// Spawn a PTY reader thread that feeds output into the terminal screen.
     fn spawn_reader(
         mut reader: Box<dyn std::io::Read + Send>,
+        writer: SharedWriter,
         screen: &Arc<RwLock<TerminalScreen>>,
         is_alive: &Arc<Mutex<bool>>,
         has_new_data: &Arc<AtomicBool>,
@@ -192,6 +376,7 @@ impl Terminal {
             let mut parser = Parser::new();
             let mut buf = [0u8; 16384];
             let mut performer = terminal::VtPerformer {
+                writer,
                 screen: Arc::clone(&screen_clone),
                 pending_backslash: false,
                 pending_ops: Vec::with_capacity(8192),
@@ -221,7 +406,7 @@ impl Terminal {
     #[allow(clippy::too_many_arguments)]
     fn build(
         pty: Arc<Mutex<Box<dyn MasterPty + Send>>>,
-        writer: Box<dyn std::io::Write + Send>,
+        writer: SharedWriter,
         child: Box<dyn portable_pty::Child + Send + Sync>,
         shell_pid: Option<u32>,
         screen: Arc<RwLock<TerminalScreen>>,
@@ -319,12 +504,18 @@ impl Terminal {
             cols as usize,
         )));
         let reader = pair.master.try_clone_reader()?;
-        let writer = pair.master.take_writer()?;
+        let writer = Arc::new(Mutex::new(pair.master.take_writer()?));
         let pty = Arc::new(Mutex::new(pair.master));
         let is_alive = Arc::new(Mutex::new(true));
         let has_new_data = Arc::new(AtomicBool::new(false));
 
-        Self::spawn_reader(reader, &screen, &is_alive, &has_new_data);
+        Self::spawn_reader(
+            reader,
+            Arc::clone(&writer),
+            &screen,
+            &is_alive,
+            &has_new_data,
+        );
 
         let username = std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))
@@ -385,12 +576,18 @@ impl Terminal {
             cols as usize,
         )));
         let reader = pair.master.try_clone_reader()?;
-        let writer = pair.master.take_writer()?;
+        let writer = Arc::new(Mutex::new(pair.master.take_writer()?));
         let pty = Arc::new(Mutex::new(pair.master));
         let is_alive = Arc::new(Mutex::new(true));
         let has_new_data = Arc::new(AtomicBool::new(false));
 
-        Self::spawn_reader(reader, &screen, &is_alive, &has_new_data);
+        Self::spawn_reader(
+            reader,
+            Arc::clone(&writer),
+            &screen,
+            &is_alive,
+            &has_new_data,
+        );
 
         let mut term = Self::build(
             pty,
@@ -555,8 +752,9 @@ impl Terminal {
 
     /// Send input to PTY
     fn send_input(&mut self, data: &[u8]) -> Result<()> {
-        self.writer.write_all(data)?;
-        self.writer.flush()?;
+        let mut writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+        writer.write_all(data)?;
+        writer.flush()?;
         Ok(())
     }
 
@@ -565,6 +763,18 @@ impl Terminal {
         self.send_input(command.as_bytes())?;
         self.send_input(b"\r")?;
         Ok(())
+    }
+
+    fn send_focus_event(&mut self, focused: bool) -> Result<()> {
+        let focus_reporting = self.read_screen().focus_reporting;
+        if !focus_reporting {
+            return Ok(());
+        }
+        if focused {
+            self.send_input(b"\x1b[I")
+        } else {
+            self.send_input(b"\x1b[O")
+        }
     }
 
     /// Copy selected text to clipboard
@@ -593,7 +803,8 @@ impl Terminal {
         // Always use bracketed paste - the outer terminal (where termide runs)
         // already stripped the brackets, so we need to re-add them for the
         // inner shell/application running in our PTY
-        clipboard::paste_atomic(&mut self.writer, text, true)
+        let mut writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+        clipboard::paste_atomic(&mut *writer, text, true)
     }
 
     /// Send mouse event to PTY (if mouse tracking is enabled)
@@ -610,28 +821,40 @@ impl Terminal {
             (screen.mouse_tracking, screen.sgr_mouse_mode)
         };
 
-        // If mouse tracking is disabled, don't send
-        if mouse_tracking == MouseTrackingMode::None {
+        if !can_send_mouse_event(mouse.kind, mouse_tracking) {
             return Ok(());
         }
 
-        // 1-based coordinates for SGR
-        let inner_x = mouse.column.saturating_sub(panel_area.x + 1) + 1;
-        let inner_y = mouse.row.saturating_sub(panel_area.y + 1) + 1;
+        let inner_x_min = panel_area.x + 1;
+        let inner_x_max = panel_area.x + panel_area.width.saturating_sub(2);
+        let inner_y_min = panel_area.y + 1;
+        let inner_y_max = panel_area.y + panel_area.height.saturating_sub(2);
+
+        let clamped_col = mouse.column.clamp(inner_x_min, inner_x_max);
+        let clamped_row = mouse.row.clamp(inner_y_min, inner_y_max);
+
+        // 1-based coordinates for xterm mouse reporting
+        let inner_x = clamped_col.saturating_sub(inner_x_min) + 1;
+        let inner_y = clamped_row.saturating_sub(inner_y_min) + 1;
 
         // Reusable buffer to avoid allocations (max SGR sequence is ~20 bytes)
         let mut buf = [0u8; 32];
 
         // Determine button code and whether this is release event
+        let modifier_bits = mouse_modifier_bits(mouse.modifiers);
         let (btn_code, is_release): (u8, bool) = match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => (0, false),
-            MouseEventKind::Down(MouseButton::Middle) => (1, false),
-            MouseEventKind::Down(MouseButton::Right) => (2, false),
-            MouseEventKind::Up(MouseButton::Left) => (0, true),
-            MouseEventKind::Up(MouseButton::Middle) => (1, true),
-            MouseEventKind::Up(MouseButton::Right) => (2, true),
-            MouseEventKind::ScrollUp => (64, false),
-            MouseEventKind::ScrollDown => (65, false),
+            MouseEventKind::Down(MouseButton::Left) => (modifier_bits, false),
+            MouseEventKind::Down(MouseButton::Middle) => (1 + modifier_bits, false),
+            MouseEventKind::Down(MouseButton::Right) => (2 + modifier_bits, false),
+            MouseEventKind::Up(MouseButton::Left)
+            | MouseEventKind::Up(MouseButton::Middle)
+            | MouseEventKind::Up(MouseButton::Right) => (3 + modifier_bits, true),
+            MouseEventKind::Drag(MouseButton::Left) => (32 + modifier_bits, false),
+            MouseEventKind::Drag(MouseButton::Middle) => (33 + modifier_bits, false),
+            MouseEventKind::Drag(MouseButton::Right) => (34 + modifier_bits, false),
+            MouseEventKind::Moved => (35 + modifier_bits, false),
+            MouseEventKind::ScrollUp => (64 + modifier_bits, false),
+            MouseEventKind::ScrollDown => (65 + modifier_bits, false),
             _ => return Ok(()),
         };
 
@@ -1541,11 +1764,18 @@ impl Panel for Terminal {
 
         // Reset scroll on input, cache application_cursor_keys - single lock
         // Note: selection is NOT cleared on keypress to allow copying from running apps
-        let application_cursor_keys = {
+        let (application_cursor_keys, keyboard_protocol) = {
             let mut screen = self.write_screen();
             screen.reset_scroll();
-            screen.application_cursor_keys
+            (screen.application_cursor_keys, screen.keyboard_protocol)
         };
+
+        if keyboard_protocol != KeyboardProtocolMode::Legacy {
+            if let Some(bytes) = modern_key_bytes(&key, keyboard_protocol) {
+                let _ = self.send_input(&bytes);
+                return vec![];
+            }
+        }
 
         // Handle special keys
         match key.code {
@@ -1582,8 +1812,9 @@ impl Panel for Terminal {
                 }
             }
             KeyCode::Enter => {
-                if key.modifiers.contains(KeyModifiers::SHIFT)
-                    || key.modifiers.contains(KeyModifiers::ALT)
+                if keyboard_protocol == KeyboardProtocolMode::Legacy
+                    && (key.modifiers.contains(KeyModifiers::SHIFT)
+                        || key.modifiers.contains(KeyModifiers::ALT))
                 {
                     // Shift+Enter or Alt+Enter sends newline for multi-line input.
                     // Alt+Enter works on VTE terminals (gnome-terminal, etc.) where
@@ -1734,7 +1965,9 @@ impl Panel for Terminal {
 
         // Track Ctrl key state for URL highlighting
         let ctrl_pressed = mouse.modifiers.contains(KeyModifiers::CONTROL);
+        let alt_pressed = mouse.modifiers.contains(KeyModifiers::ALT);
         self.ctrl_pressed = ctrl_pressed;
+        let mut needs_redraw = false;
 
         // Detect link (URL or path) under cursor when Ctrl is pressed
         if ctrl_pressed && is_inside {
@@ -1772,186 +2005,227 @@ impl Panel for Terminal {
                 }
                 self.hovered_link = Some((link_type, segments));
                 self.cached_lines = None; // Force redraw
+                needs_redraw = true;
             } else {
                 // No link under cursor
                 drop(screen);
                 if self.hovered_link.is_some() {
                     self.hovered_link = None;
                     self.cached_lines = None; // Force redraw
+                    needs_redraw = true;
                 }
             }
         } else if !ctrl_pressed && self.hovered_link.is_some() {
             // Ctrl not pressed - clear link highlight
             self.hovered_link = None;
             self.cached_lines = None; // Force redraw
+            needs_redraw = true;
         }
 
-        // Handle scroll events first - they should work even when cursor is near border
-        match mouse.kind {
-            MouseEventKind::ScrollUp => {
-                self.write_screen().scroll_view_up(3);
-                return vec![];
-            }
-            MouseEventKind::ScrollDown => {
-                self.write_screen().scroll_view_down(3);
-                return vec![];
-            }
-            _ => {}
-        }
-
-        // Check if selection is active
-        let selection_active = {
+        let (selection_active, mouse_tracking) = {
             let screen = self.read_screen();
-            screen.selection_start.is_some()
+            (screen.selection_start.is_some(), screen.mouse_tracking)
         };
 
         // If mouse is outside and selection is not active - ignore other events
         if !is_inside && !selection_active {
-            return vec![];
+            return if needs_redraw {
+                vec![PanelEvent::NeedsRedraw]
+            } else {
+                vec![]
+            };
         }
 
-        // Handle local text selection (priority over sending to PTY)
-        match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                // Start selection only inside panel
-                if !is_inside {
-                    return vec![];
-                }
+        let route = mouse_route(
+            mouse.kind,
+            is_inside,
+            selection_active,
+            mouse_tracking,
+            alt_pressed,
+        );
 
-                // Ctrl+Click: check for hex color first
-                if ctrl_pressed {
-                    let line_text = {
-                        let screen = self.read_screen();
-                        let abs_row = screen.visual_to_absolute(inner_row);
-                        screen
-                            .get_line_by_absolute(abs_row)
-                            .map(|cells| cells.iter().map(|c| c.ch).collect::<String>())
-                            .unwrap_or_default()
-                    };
-                    if let Some((r, g, b, hex)) = extract_hex_color_at_col(&line_text, inner_col) {
-                        self.color_preview = Some(ColorPreview {
-                            r,
-                            g,
-                            b,
-                            hex,
-                            screen_row: mouse.row,
-                            screen_col: mouse.column,
-                        });
-                        return vec![];
-                    }
-                }
-
-                // Ctrl+Click on link - open URL in browser or path in file manager
-                if ctrl_pressed {
-                    if let Some((ref link_type, _)) = self.hovered_link {
-                        match link_type {
-                            LinkType::Url(url) => {
-                                let _ = open::that(url);
-                            }
-                            LinkType::FilePath(path) => {
-                                // Open directory in file manager, or file's parent with file selected
-                                let (dir, file) = if path.is_dir() {
-                                    (path.clone(), None)
-                                } else {
-                                    (
-                                        path.parent()
-                                            .map(|p| p.to_path_buf())
-                                            .unwrap_or_else(|| path.clone()),
-                                        path.file_name().map(|n| n.to_os_string()),
-                                    )
-                                };
-                                return vec![PanelEvent::OpenPath {
-                                    path: dir,
-                                    select_file: file,
-                                }];
-                            }
-                        }
-                        return vec![];
-                    }
-                }
-
-                // Start text selection with absolute coordinates
-                let mut screen = self.write_screen();
+        // Ctrl+Click local actions override PTY passthrough
+        if ctrl_pressed
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && is_inside
+        {
+            let line_text = {
+                let screen = self.read_screen();
                 let abs_row = screen.visual_to_absolute(inner_row);
-                screen.selection_start = Some((abs_row, inner_col));
-                screen.selection_end = Some((abs_row, inner_col)); // Set immediately for visibility
-                drop(screen);
-
-                // Start selection drag tracking for auto-scroll
-                self.selection_drag_active = true;
-
-                // Also send click to PTY if mouse tracking is enabled
-                let _ = self.send_mouse_to_pty(&mouse, panel_area);
+                screen
+                    .get_line_by_absolute(abs_row)
+                    .map(|cells| cells.iter().map(|c| c.ch).collect::<String>())
+                    .unwrap_or_default()
+            };
+            if let Some((r, g, b, hex)) = extract_hex_color_at_col(&line_text, inner_col) {
+                self.color_preview = Some(ColorPreview {
+                    r,
+                    g,
+                    b,
+                    hex,
+                    screen_row: mouse.row,
+                    screen_col: mouse.column,
+                });
+                return vec![PanelEvent::NeedsRedraw];
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                let mut screen = self.write_screen();
-                if screen.selection_start.is_some() {
-                    // Auto-scroll if mouse is above or below content area
-                    let max_scroll = screen.scrollback.len();
-                    if mouse.row < inner_y_min && screen.scroll_offset < max_scroll {
-                        // Mouse above panel - scroll up into history
-                        screen.scroll_view_up(1);
-                    } else if mouse.row > inner_y_max && screen.scroll_offset > 0 {
-                        // Mouse below panel - scroll down towards current
-                        screen.scroll_view_down(1);
+
+            if let Some((ref link_type, _)) = self.hovered_link {
+                match link_type {
+                    LinkType::Url(url) => {
+                        let _ = open::that(url);
+                        return if needs_redraw {
+                            vec![PanelEvent::NeedsRedraw]
+                        } else {
+                            vec![]
+                        };
                     }
-
-                    // Update selection end with absolute coordinates (using clamped row)
-                    let abs_row = screen.visual_to_absolute(inner_row);
-                    screen.selection_end = Some((abs_row, inner_col));
-                }
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                // Clear color preview on mouse release
-                self.color_preview = None;
-
-                // End selection drag tracking
-                self.selection_drag_active = false;
-                self.last_mouse_position = None;
-
-                // Finalize selection
-                let is_single_click = {
-                    let mut screen = self.write_screen();
-                    let abs_row = screen.visual_to_absolute(inner_row);
-                    if let Some(start) = screen.selection_start {
-                        screen.selection_end = Some((abs_row, inner_col));
-                        // Single click = no drag (start == end)
-                        start == (abs_row, inner_col)
-                    } else {
-                        false
+                    LinkType::FilePath(path) => {
+                        let (dir, file) = if path.is_dir() {
+                            (path.clone(), None)
+                        } else {
+                            (
+                                path.parent()
+                                    .map(|p| p.to_path_buf())
+                                    .unwrap_or_else(|| path.clone()),
+                                path.file_name().map(|n| n.to_os_string()),
+                            )
+                        };
+                        return vec![PanelEvent::OpenPath {
+                            path: dir,
+                            select_file: file,
+                        }];
                     }
-                };
-
-                // Clear selection on single click (no drag)
-                // Copy is done manually via Ctrl+Shift+C
-                if is_single_click {
-                    let mut screen = self.write_screen();
-                    screen.clear_selection();
                 }
-
-                // Send release to PTY if mouse tracking is enabled (only if inside)
-                if is_inside {
-                    let _ = self.send_mouse_to_pty(&mouse, panel_area);
-                }
-            }
-            // Scroll events are handled above (before boundary check)
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {}
-            // Other mouse events send to PTY
-            _ => {
-                let _ = self.send_mouse_to_pty(&mouse, panel_area);
             }
         }
 
-        vec![]
+        match route {
+            MouseRoute::LocalScrollback => match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    self.write_screen().scroll_view_up(3);
+                    needs_redraw = true;
+                }
+                MouseEventKind::ScrollDown => {
+                    self.write_screen().scroll_view_down(3);
+                    needs_redraw = true;
+                }
+                _ => {}
+            },
+            MouseRoute::LocalSelection => match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    // Start selection only inside panel
+                    if !is_inside {
+                        return if needs_redraw {
+                            vec![PanelEvent::NeedsRedraw]
+                        } else {
+                            vec![]
+                        };
+                    }
+
+                    // Start text selection with absolute coordinates
+                    let mut screen = self.write_screen();
+                    let abs_row = screen.visual_to_absolute(inner_row);
+                    screen.selection_start = Some((abs_row, inner_col));
+                    screen.selection_end = Some((abs_row, inner_col)); // Set immediately for visibility
+                    drop(screen);
+
+                    // Start selection drag tracking for auto-scroll
+                    self.selection_drag_active = true;
+                    needs_redraw = true;
+                }
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    let mut screen = self.write_screen();
+                    if screen.selection_start.is_some() {
+                        // Auto-scroll if mouse is above or below content area
+                        let max_scroll = screen.scrollback.len();
+                        if mouse.row < inner_y_min && screen.scroll_offset < max_scroll {
+                            // Mouse above panel - scroll up into history
+                            screen.scroll_view_up(1);
+                        } else if mouse.row > inner_y_max && screen.scroll_offset > 0 {
+                            // Mouse below panel - scroll down towards current
+                            screen.scroll_view_down(1);
+                        }
+
+                        // Update selection end with absolute coordinates (using clamped row)
+                        let abs_row = screen.visual_to_absolute(inner_row);
+                        screen.selection_end = Some((abs_row, inner_col));
+                        needs_redraw = true;
+                    }
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    self.color_preview = None;
+
+                    self.selection_drag_active = false;
+                    self.last_mouse_position = None;
+
+                    let is_single_click = {
+                        let mut screen = self.write_screen();
+                        let abs_row = screen.visual_to_absolute(inner_row);
+                        if let Some(start) = screen.selection_start {
+                            screen.selection_end = Some((abs_row, inner_col));
+                            start == (abs_row, inner_col)
+                        } else {
+                            false
+                        }
+                    };
+
+                    if is_single_click {
+                        let mut screen = self.write_screen();
+                        screen.clear_selection();
+                    }
+                    needs_redraw = true;
+                }
+                _ => {}
+            },
+            MouseRoute::Pty => {
+                self.color_preview = None;
+                self.selection_drag_active = false;
+                let _ = self.send_mouse_to_pty(&mouse, panel_area);
+            }
+            MouseRoute::Ignore => {
+                if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) {
+                    self.color_preview = None;
+                    needs_redraw = true;
+                }
+            }
+        }
+
+        if needs_redraw {
+            vec![PanelEvent::NeedsRedraw]
+        } else {
+            vec![]
+        }
     }
 
-    fn handle_scroll(&mut self, delta: i32, _panel_area: Rect) -> Vec<PanelEvent> {
-        let lines = delta.unsigned_abs() as usize * 3; // 3 lines per scroll unit
-        let mut screen = self.write_screen();
-        if delta < 0 {
-            screen.scroll_view_up(lines);
+    fn handle_scroll(&mut self, delta: i32, panel_area: Rect) -> Vec<PanelEvent> {
+        let tracking = self.read_screen().mouse_tracking;
+        if tracking != MouseTrackingMode::None {
+            let kind = if delta < 0 {
+                crossterm::event::MouseEventKind::ScrollUp
+            } else {
+                crossterm::event::MouseEventKind::ScrollDown
+            };
+            let steps = delta.unsigned_abs();
+            let (column, row) = self
+                .last_mouse_position
+                .unwrap_or((panel_area.x + 1, panel_area.y + 1));
+            for _ in 0..steps {
+                let mouse = crossterm::event::MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::empty(),
+                };
+                let _ = self.send_mouse_to_pty(&mouse, panel_area);
+            }
         } else {
-            screen.scroll_view_down(lines);
+            let lines = delta.unsigned_abs() as usize * 3; // 3 lines per scroll unit
+            let mut screen = self.write_screen();
+            if delta < 0 {
+                screen.scroll_view_up(lines);
+            } else {
+                screen.scroll_view_down(lines);
+            }
         }
         vec![]
     }
@@ -2019,6 +2293,12 @@ impl Panel for Terminal {
                 } else {
                     CommandResult::NeedsRedraw(false)
                 }
+            }
+            PanelCommand::SetHostFocus { focused } => {
+                if let Err(e) = self.send_focus_event(focused) {
+                    log::debug!("Terminal focus event send failed: {}", e);
+                }
+                CommandResult::None
             }
             // Terminals always stay active (PTY must be drained), so MarkStale/RefreshIfStale are no-ops
             PanelCommand::MarkStale | PanelCommand::RefreshIfStale => CommandResult::None,
@@ -2149,6 +2429,129 @@ impl Panel for Terminal {
 
             let _ = self.child.wait();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEventKind};
+
+    #[test]
+    fn mouse_route_prefers_pty_when_tracking_enabled() {
+        assert_eq!(
+            mouse_route(
+                MouseEventKind::Down(MouseButton::Left),
+                true,
+                false,
+                MouseTrackingMode::Normal,
+                false,
+            ),
+            MouseRoute::Pty
+        );
+        assert_eq!(
+            mouse_route(
+                MouseEventKind::Drag(MouseButton::Left),
+                true,
+                false,
+                MouseTrackingMode::ButtonEvent,
+                false,
+            ),
+            MouseRoute::Pty
+        );
+        assert_eq!(
+            mouse_route(
+                MouseEventKind::Moved,
+                true,
+                false,
+                MouseTrackingMode::AnyEvent,
+                false,
+            ),
+            MouseRoute::Pty
+        );
+    }
+
+    #[test]
+    fn mouse_route_keeps_alt_drag_for_local_selection() {
+        assert_eq!(
+            mouse_route(
+                MouseEventKind::Down(MouseButton::Left),
+                true,
+                false,
+                MouseTrackingMode::ButtonEvent,
+                true,
+            ),
+            MouseRoute::LocalSelection
+        );
+        assert_eq!(
+            mouse_route(
+                MouseEventKind::Drag(MouseButton::Left),
+                true,
+                true,
+                MouseTrackingMode::ButtonEvent,
+                true,
+            ),
+            MouseRoute::LocalSelection
+        );
+    }
+
+    #[test]
+    fn can_send_mouse_event_respects_tracking_mode() {
+        assert!(!can_send_mouse_event(
+            MouseEventKind::Moved,
+            MouseTrackingMode::ButtonEvent
+        ));
+        assert!(can_send_mouse_event(
+            MouseEventKind::Moved,
+            MouseTrackingMode::AnyEvent
+        ));
+        assert!(can_send_mouse_event(
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseTrackingMode::ButtonEvent
+        ));
+        assert!(!can_send_mouse_event(
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseTrackingMode::Normal
+        ));
+    }
+
+    #[test]
+    fn mouse_modifier_bits_match_xterm_encoding() {
+        assert_eq!(mouse_modifier_bits(KeyModifiers::empty()), 0);
+        assert_eq!(mouse_modifier_bits(KeyModifiers::SHIFT), 4);
+        assert_eq!(mouse_modifier_bits(KeyModifiers::ALT), 8);
+        assert_eq!(mouse_modifier_bits(KeyModifiers::CONTROL), 16);
+        assert_eq!(
+            mouse_modifier_bits(KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL),
+            28
+        );
+    }
+
+    #[test]
+    fn modern_key_bytes_encode_ambiguous_keys() {
+        let ctrl_i = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL);
+        assert_eq!(
+            modern_key_bytes(&ctrl_i, KeyboardProtocolMode::CsiUCompat),
+            Some(b"\x1b[105;5u".to_vec())
+        );
+
+        let shift_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT);
+        assert_eq!(
+            modern_key_bytes(&shift_enter, KeyboardProtocolMode::CsiUCompat),
+            Some(b"\x1b[13;2u".to_vec())
+        );
+
+        let plain_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty());
+        assert_eq!(
+            modern_key_bytes(&plain_a, KeyboardProtocolMode::CsiUCompat),
+            None
+        );
+
+        let shifted_a = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT);
+        assert_eq!(
+            modern_key_bytes(&shifted_a, KeyboardProtocolMode::ModifyOtherKeys2),
+            Some(b"\x1b[65;2u".to_vec())
+        );
     }
 }
 

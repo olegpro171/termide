@@ -6,6 +6,7 @@ The terminal panel provides a full-featured terminal emulator with pseudotermina
 
 - **Interactive Shell**: Launches the default system shell (`fish`, `zsh`, `bash`, etc.) for command execution
 - **Compatibility**: Supports `xterm-256color` and most standard ANSI control sequences, ensuring correct display of colors and text styles
+- **Modern TUI Compatibility**: Responds to common terminal capability queries and supports negotiated keyboard/focus reporting used by applications such as `vim`, `neovim`, `yazi`, `htop`, and `lazygit`
 - **Process Management**: When closing a terminal panel with running processes, the application will request confirmation before terminating them
 
 ## Interaction
@@ -28,6 +29,8 @@ The terminal panel provides a full-featured terminal emulator with pseudotermina
 TermIDE supports Cyrillic keyboard layouts for common shortcuts. When using a Russian/Cyrillic layout, you can use `Ctrl+Shift+М` (where М is the Cyrillic letter corresponding to V) instead of switching to Latin layout. This works for paste operations in the terminal.
 
 All other key combinations are passed directly to the application running in the terminal.
+
+When an application inside the terminal requests modern keyboard reporting, TermIDE switches from legacy xterm-style key encoding to the negotiated compatibility mode. This helps applications distinguish ambiguous combinations such as `Ctrl+I` vs `Tab`, `Ctrl+M` vs `Enter`, and modified `Esc`/`Backspace`.
 
 **Modified arrow keys and Home/End** are encoded as the standard xterm CSI
 `1;{mod}{final}` escape sequence (`{mod}` is the xterm modifier parameter:
@@ -69,8 +72,14 @@ default_shell = "/usr/bin/fish"
 
 ## Mouse Support
 
-- **Text Selection**: Click and hold the left mouse button to select text. Selected text is automatically copied to the clipboard after releasing the button
-- **Scroll Wheel**: Scroll through terminal output history
+- **Text Selection**: In the normal shell/scrollback view, click and drag with the left mouse button to select text. When the application inside the terminal enables xterm mouse tracking, use `Alt+drag` for local text selection instead
+- **Scroll Wheel**: Scroll through terminal output history until the application inside the terminal enables mouse tracking. After that, the wheel is passed through to the application
 - **Ctrl+Click on URL/path**: Open link in browser or file manager
 - **Ctrl+Click on hex color**: Show color preview popup (e.g. `#ff0000`, `#abc`) — visible while button is held, disappears on release
-- **Application Interaction**: If a console application (e.g., `htop` or `mc`) supports mouse input, the terminal will pass mouse events to it
+- **Application Interaction**: If a console application (e.g., `htop` or `mc`) enables xterm mouse tracking, TermIDE gives it priority for click, drag, move, and wheel events inside the terminal content area
+
+## Application Compatibility Notes
+
+- **Keyboard negotiation**: TermIDE answers the common keyboard capability queries used by modern TUI applications and supports negotiated `CSI u` / `modifyOtherKeys` compatibility modes when requested by the application
+- **Focus reporting**: If an application enables xterm focus events (`?1004`), TermIDE forwards host terminal focus gain/loss as `CSI I` / `CSI O`
+- **Terminal identity**: The inner PTY keeps the regular `xterm-256color` baseline and adds compatibility through runtime negotiation rather than by pretending to be a different terminal

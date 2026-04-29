@@ -69,6 +69,13 @@ pub enum PanelCommand<'a> {
         cols: u16,
     },
 
+    /// Notify terminal-like panels that host terminal focus changed.
+    /// Response: `CommandResult::None`
+    SetHostFocus {
+        /// Whether the host terminal is focused
+        focused: bool,
+    },
+
     // === Editor state queries ===
     /// Query editor modification status.
     /// Response: `CommandResult::ModificationStatus { ... }`
@@ -313,6 +320,13 @@ mod tests {
         assert!(matches!(
             cloned,
             PanelCommand::Resize { rows: 24, cols: 80 }
+        ));
+
+        let cmd = PanelCommand::SetHostFocus { focused: true };
+        let cloned = cmd.clone();
+        assert!(matches!(
+            cloned,
+            PanelCommand::SetHostFocus { focused: true }
         ));
     }
 }

@@ -17,6 +17,7 @@ use termide_app_core::{
     PendingAction as CorePendingAction, StateManager, UiState,
 };
 use termide_core::event::{Event, EventHandler};
+use termide_core::PanelCommand;
 use termide_layout::{LayoutManager, PanelGroup};
 
 use termide_config::Config;
@@ -390,15 +391,18 @@ impl App {
                     self.state.needs_redraw = true;
                 }
                 Event::Mouse(mouse) => {
-                    // Mouse movement (hover) should not reset idle timer, trigger
-                    // handler calls, or force redraws. Only actionable events
-                    // (clicks, scrolls, drags) wake from idle.
-                    if !matches!(mouse.kind, MouseEventKind::Moved) {
+                    let is_moved = matches!(mouse.kind, MouseEventKind::Moved);
+                    // Mouse movement (hover) should not wake the app from idle,
+                    // but the active terminal panel still needs to see it for
+                    // mouse-tracking passthrough and Ctrl+hover visuals.
+                    if !is_moved {
                         self.state.last_activity = std::time::Instant::now();
                         self.event_handler.set_tick_rate(Duration::from_millis(
                             termide_config::constants::EVENT_HANDLER_INTERVAL_MS,
                         ));
-                        self.handle_mouse_event(mouse)?;
+                    }
+                    self.handle_mouse_event(mouse)?;
+                    if !is_moved {
                         self.state.needs_redraw = true;
                     }
                 }
@@ -412,6 +416,7 @@ impl App {
                     self.state.needs_redraw = true;
                 }
                 Event::FocusLost => {
+                    self.notify_active_panel_host_focus(false);
                     // Save session on focus loss (with debounce)
                     if self.state.should_save_session() {
                         self.auto_save_session();
@@ -419,6 +424,7 @@ impl App {
                     }
                 }
                 Event::FocusGained => {
+                    self.notify_active_panel_host_focus(true);
                     // Redraw on focus gain to refresh display
                     self.state.needs_redraw = true;
                 }
@@ -797,6 +803,17 @@ impl App {
         let lines = vec![(String::new(), message)];
         let modal = termide_modal::InfoModal::new(termide_i18n::t().modal_error_title(), lines);
         self.state.active_modal = Some(termide_modal::ActiveModal::Info(Box::new(modal)));
+    }
+
+    fn notify_active_panel_host_focus(&mut self, focused: bool) {
+        if let Some(panel) = self.layout_manager.active_panel_mut() {
+            if panel
+                .handle_command(PanelCommand::SetHostFocus { focused })
+                .needs_redraw()
+            {
+                self.state.needs_redraw = true;
+            }
+        }
     }
 }
 

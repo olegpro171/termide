@@ -6,12 +6,12 @@
 #![allow(clippy::needless_range_loop)]
 
 use std::io::Write;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use vte::{Params, Perform};
 
 use super::{
     csi_handlers::{handle_cursor_movement, handle_private_sequence, handle_sgr},
-    Cell, TerminalScreen,
+    Cell, KeyboardProtocolMode, TerminalScreen,
 };
 
 /// Batched screen operation to reduce mutex contention.
@@ -35,6 +35,7 @@ pub enum ScreenOp {
 /// Uses batching to reduce lock contention: simple operations (print, execute)
 /// are collected in a buffer and applied with a single lock via `flush()`.
 pub struct VtPerformer {
+    pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub screen: Arc<RwLock<TerminalScreen>>,
     pub pending_backslash: bool,
     /// Buffer for batching screen operations
@@ -61,6 +62,13 @@ impl VtPerformer {
                 }
             }
             screen.dirty = true;
+        }
+    }
+
+    fn write_response(&self, data: &[u8]) {
+        if let Ok(mut writer) = self.writer.lock() {
+            let _ = writer.write_all(data);
+            let _ = writer.flush();
         }
     }
 }
@@ -161,7 +169,65 @@ impl Perform for VtPerformer {
 
             // Handle private sequences (start with '?')
             if !intermediates.is_empty() && intermediates[0] == b'?' {
+                if c == 'u' {
+                    let flags = match screen.keyboard_protocol {
+                        KeyboardProtocolMode::Legacy => 0,
+                        KeyboardProtocolMode::CsiUCompat => 1,
+                        KeyboardProtocolMode::ModifyOtherKeys2 => 0,
+                    };
+                    drop(screen);
+                    self.write_response(format!("\x1b[?{}u", flags).as_bytes());
+                    return;
+                }
                 handle_private_sequence(&mut screen, params, c);
+                return;
+            }
+
+            if !intermediates.is_empty() && intermediates[0] == b'>' {
+                if c == 'u' {
+                    let flag = params
+                        .iter()
+                        .next()
+                        .and_then(|p| p.first())
+                        .copied()
+                        .unwrap_or(0);
+                    screen.keyboard_protocol = if flag == 1 {
+                        KeyboardProtocolMode::CsiUCompat
+                    } else {
+                        KeyboardProtocolMode::Legacy
+                    };
+                    screen.dirty = true;
+                    return;
+                }
+                if c == 'm' {
+                    let option = params
+                        .iter()
+                        .next()
+                        .and_then(|p| p.first())
+                        .copied()
+                        .unwrap_or(0);
+                    let value = params
+                        .iter()
+                        .nth(1)
+                        .and_then(|p| p.first())
+                        .copied()
+                        .unwrap_or(u16::MAX);
+                    if option == 4 {
+                        screen.keyboard_protocol = match value {
+                            2 => KeyboardProtocolMode::ModifyOtherKeys2,
+                            u16::MAX => KeyboardProtocolMode::Legacy,
+                            0 => KeyboardProtocolMode::Legacy,
+                            _ => screen.keyboard_protocol,
+                        };
+                    }
+                    screen.dirty = true;
+                    return;
+                }
+            }
+
+            if !intermediates.is_empty() && intermediates[0] == b'<' && c == 'u' {
+                screen.keyboard_protocol = KeyboardProtocolMode::Legacy;
+                screen.dirty = true;
                 return;
             }
 
@@ -176,6 +242,11 @@ impl Perform for VtPerformer {
             }
 
             match c {
+                'c' => {
+                    drop(screen);
+                    self.write_response(b"\x1b[?62c");
+                    return;
+                }
                 'J' => {
                     // ED - Erase in Display
                     let param = params
@@ -646,6 +717,27 @@ impl Perform for VtPerformer {
                         .unwrap_or(screen.rows);
                     screen.set_scroll_region(top, bottom);
                 }
+                'n' => {
+                    let param = params
+                        .iter()
+                        .next()
+                        .and_then(|p| p.first())
+                        .copied()
+                        .unwrap_or(0);
+                    let reply = match param {
+                        5 => Some(b"\x1b[0n".to_vec()),
+                        6 => Some(
+                            format!("\x1b[{};{}R", screen.cursor.0 + 1, screen.cursor.1 + 1)
+                                .into_bytes(),
+                        ),
+                        _ => None,
+                    };
+                    drop(screen);
+                    if let Some(reply) = reply {
+                        self.write_response(&reply);
+                    }
+                    return;
+                }
                 'l' | 'h' => {
                     // Set/Reset Mode (ignore but don't break)
                 }
@@ -679,5 +771,88 @@ impl Perform for VtPerformer {
             }
             screen.dirty = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Result as IoResult;
+    use vte::Parser;
+
+    struct SharedCapture(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedCapture {
+        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+    }
+
+    fn performer() -> (
+        VtPerformer,
+        Arc<Mutex<Vec<u8>>>,
+        Arc<RwLock<TerminalScreen>>,
+    ) {
+        let capture = Arc::new(Mutex::new(Vec::new()));
+        let screen = Arc::new(RwLock::new(TerminalScreen::new(24, 80)));
+        let performer = VtPerformer {
+            writer: Arc::new(Mutex::new(
+                Box::new(SharedCapture(Arc::clone(&capture))) as Box<dyn Write + Send>
+            )),
+            screen: Arc::clone(&screen),
+            pending_backslash: false,
+            pending_ops: Vec::new(),
+        };
+        (performer, capture, screen)
+    }
+
+    fn feed(performer: &mut VtPerformer, bytes: &[u8]) {
+        let mut parser = Parser::new();
+        for byte in bytes {
+            parser.advance(performer, *byte);
+        }
+    }
+
+    #[test]
+    fn keyboard_query_reply_is_emitted() {
+        let (mut performer, capture, _screen) = performer();
+        feed(&mut performer, b"\x1b[?u");
+        assert_eq!(&*capture.lock().unwrap(), b"\x1b[?0u");
+    }
+
+    #[test]
+    fn keyboard_modes_toggle_via_escape_sequences() {
+        let (mut performer, _capture, screen) = performer();
+        feed(&mut performer, b"\x1b[>1u");
+        assert_eq!(
+            screen.read().unwrap().keyboard_protocol,
+            KeyboardProtocolMode::CsiUCompat
+        );
+        feed(&mut performer, b"\x1b[>4;2m");
+        assert_eq!(
+            screen.read().unwrap().keyboard_protocol,
+            KeyboardProtocolMode::ModifyOtherKeys2
+        );
+        feed(&mut performer, b"\x1b[>4m");
+        assert_eq!(
+            screen.read().unwrap().keyboard_protocol,
+            KeyboardProtocolMode::Legacy
+        );
+    }
+
+    #[test]
+    fn da_and_dsr_replies_use_current_screen_state() {
+        let (mut performer, capture, screen) = performer();
+        screen.write().unwrap().cursor = (1, 2);
+
+        feed(&mut performer, b"\x1b[c");
+        feed(&mut performer, b"\x1b[6n");
+
+        assert_eq!(&*capture.lock().unwrap(), b"\x1b[?62c\x1b[2;3R");
     }
 }
