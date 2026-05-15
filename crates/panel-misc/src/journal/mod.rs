@@ -133,7 +133,7 @@ impl Panel for JournalPanel {
         self.editor.prepare_render(theme, config);
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _ctx: &RenderContext) {
+    fn render(&mut self, area: Rect, buf: &mut Buffer, ctx: &RenderContext) {
         // Sync new log entries
         self.sync_logs();
 
@@ -148,6 +148,7 @@ impl Panel for JournalPanel {
             buf,
             &self.cached_theme,
             &self.cached_config,
+            ctx.is_focused,
             &mut self.highlight_cache,
         );
     }

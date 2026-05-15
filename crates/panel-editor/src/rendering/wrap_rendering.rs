@@ -40,6 +40,7 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
     render_context: &mut RenderContext,
     diagnostics_by_line: &std::collections::HashMap<usize, Vec<git::DiagnosticInfo>>,
     theme: &Theme,
+    is_focused: bool,
     content_width: usize,
     content_height: usize,
     line_number_width: u16,
@@ -211,11 +212,15 @@ pub fn render_content_word_wrap<H: LineHighlighter>(
         line_idx += 1;
     }
 
-    // Render cursor
-    if let Some((row, col)) = render_context.cursor_viewport_pos {
-        let cursor_x = area.x + line_number_width + col as u16;
-        let cursor_y = area.y + row as u16;
-        cursor_renderer::render_cursor_at(buf, cursor_x, cursor_y, area, theme);
+    // Render cursor — only when the panel is focused, so inactive editors
+    // don't leave a misleading caret behind. Mirrors panel-file-manager's
+    // `is_cursor && is_focused` rule.
+    if is_focused {
+        if let Some((row, col)) = render_context.cursor_viewport_pos {
+            let cursor_x = area.x + line_number_width + col as u16;
+            let cursor_y = area.y + row as u16;
+            cursor_renderer::render_cursor_at(buf, cursor_x, cursor_y, area, theme);
+        }
     }
 }
 

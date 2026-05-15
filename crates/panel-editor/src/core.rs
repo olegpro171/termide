@@ -1054,6 +1054,7 @@ impl Editor {
         buf: &mut Buffer,
         theme: &Theme,
         config: &Config,
+        is_focused: bool,
         highlighter: &mut H,
     ) {
         // Update viewport size
@@ -1106,6 +1107,7 @@ impl Editor {
             &self.selection,
             &self.lsp.diagnostics,
             theme,
+            is_focused,
             config.editor.show_git_diff,
             self.config.word_wrap,
             use_smart_wrap,
@@ -1334,6 +1336,7 @@ impl Editor {
             &self.selection,
             &self.lsp.diagnostics,
             theme,
+            is_focused,
             config.editor.show_git_diff,
             self.config.word_wrap,
             use_smart_wrap,

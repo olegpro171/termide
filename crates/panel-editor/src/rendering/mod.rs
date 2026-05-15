@@ -83,6 +83,7 @@ pub fn render_editor_content<H: LineHighlighter>(
     selection: &Option<Selection>,
     diagnostics: &[Diagnostic],
     theme: &Theme,
+    is_focused: bool,
     show_git_diff: bool,
     word_wrap_enabled: bool,
     use_smart_wrap: bool,
@@ -94,7 +95,14 @@ pub fn render_editor_content<H: LineHighlighter>(
     // Create rendering styles from theme
     let text_style = Style::default().fg(theme.fg);
     let line_number_style = Style::default().fg(theme.disabled);
-    let cursor_line_style = Style::default().bg(theme.accented_bg).fg(theme.accented_fg);
+    // When the panel is unfocused, drop the current-line highlight so the
+    // inactive editor looks fully passive — mirrors how panel-file-manager
+    // hides the cursor on blur.
+    let cursor_line_style = if is_focused {
+        Style::default().bg(theme.accented_bg).fg(theme.accented_fg)
+    } else {
+        text_style
+    };
 
     let search_match_style = Style::default().bg(theme.warning).fg(theme.bg);
 
@@ -128,6 +136,7 @@ pub fn render_editor_content<H: LineHighlighter>(
             &mut render_context,
             &diagnostics_by_line,
             theme,
+            is_focused,
             content_width,
             content_height,
             line_number_width,
@@ -154,6 +163,7 @@ pub fn render_editor_content<H: LineHighlighter>(
             &render_context,
             &diagnostics_by_line,
             theme,
+            is_focused,
             content_width,
             content_height,
             line_number_width,
