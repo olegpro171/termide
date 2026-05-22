@@ -2114,8 +2114,23 @@ impl FileManager {
                     if entry.git_status == GitStatus::Deleted {
                         return events;
                     }
-                    let path = te.full_path.clone();
                     let filename = entry.name.clone();
+                    // For remote panels we must hand the operation layer a
+                    // VFS URL pair, not a local PathBuf — otherwise the
+                    // move falls through the `is_vfs_url` check and the
+                    // file ends up renamed on the *local* filesystem (a
+                    // very nasty surprise when local and remote share a
+                    // path like /home/$USER).
+                    let (source, target_dir) = if self.vfs.is_remote() {
+                        let parent = self.vfs.current_path().clone();
+                        let src_url = parent.join(&filename).to_url_string();
+                        let parent_url = parent.to_url_string();
+                        (PathBuf::from(src_url), Some(PathBuf::from(parent_url)))
+                    } else {
+                        let path = te.full_path.clone();
+                        let parent = path.parent().map(|p| p.to_path_buf());
+                        (path, parent)
+                    };
                     let t = termide_i18n::t();
                     let modal = InputModal::with_default(
                         t.op_type_rename(),
@@ -2123,8 +2138,8 @@ impl FileManager {
                         &filename,
                     );
                     let action = PendingAction::MovePath {
-                        sources: vec![path.clone()],
-                        target_directory: path.parent().map(|p| p.to_path_buf()),
+                        sources: vec![source],
+                        target_directory: target_dir,
                     };
                     self.modal_request = Some((action, ActiveModal::Input(Box::new(modal))));
                 }
