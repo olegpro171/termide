@@ -878,8 +878,28 @@ impl FileManager {
         previous_scroll_offset: usize,
     ) {
         let count = self.visible_count();
-        if let Some(created_name) = self.navigation.take_newly_created() {
-            if let Some(idx) = self.find_entry_index(&created_name) {
+        // Newly-created cursor restore: prefer matching by full path so
+        // an entry nested inside an expanded subdir is found correctly.
+        // Fall back to matching by name for older callers that only set
+        // the name.
+        let created_path = self.navigation.take_newly_created_path();
+        let created_name = self.navigation.take_newly_created();
+        if created_path.is_some() || created_name.is_some() {
+            let mut found: Option<usize> = None;
+            if let Some(ref path) = created_path {
+                for (vis_idx, &tree_idx) in self.visible_indices.iter().enumerate() {
+                    if &self.tree_entries[tree_idx].full_path == path {
+                        found = Some(vis_idx);
+                        break;
+                    }
+                }
+            }
+            if found.is_none() {
+                if let Some(ref name) = created_name {
+                    found = self.find_entry_index(name);
+                }
+            }
+            if let Some(idx) = found {
                 self.selected = idx;
                 if self.visible_height > 0 {
                     self.adjust_scroll_offset(self.visible_height);

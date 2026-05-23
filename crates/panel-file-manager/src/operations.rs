@@ -333,6 +333,7 @@ impl FileManager {
         validate_entry_name(&name)?;
 
         let (local_target, vfs_target) = self.create_target_dir();
+        let target_full_path = local_target.join(&name);
 
         if self.vfs.is_remote() {
             let base = vfs_target.unwrap_or_else(|| self.vfs.current_path().clone());
@@ -341,16 +342,12 @@ impl FileManager {
 
             // Block until completion
             operation.recv()?;
-
-            self.navigation.set_newly_created(name);
-            self.load_directory()?;
         } else {
-            let file_path = local_target.join(&name);
-            fs::write(&file_path, "")?;
-            // Navigate to newly created file
-            self.navigation.set_newly_created(name);
-            self.load_directory()?;
+            fs::write(&target_full_path, "")?;
         }
+
+        self.navigation.set_newly_created_path(target_full_path);
+        self.load_directory()?;
         Ok(())
     }
 
@@ -359,6 +356,7 @@ impl FileManager {
         validate_entry_name(&name)?;
 
         let (local_target, vfs_target) = self.create_target_dir();
+        let target_full_path = local_target.join(&name);
 
         if self.vfs.is_remote() {
             let base = vfs_target.unwrap_or_else(|| self.vfs.current_path().clone());
@@ -367,16 +365,12 @@ impl FileManager {
 
             // Block until completion (sync behavior for UI)
             operation.recv()?;
-
-            self.navigation.set_newly_created(name);
-            self.load_directory()?;
         } else {
-            let dir_path = local_target.join(&name);
-            fs::create_dir(&dir_path)?;
-            // Navigate to newly created directory
-            self.navigation.set_newly_created(name);
-            self.load_directory()?;
+            fs::create_dir(&target_full_path)?;
         }
+
+        self.navigation.set_newly_created_path(target_full_path);
+        self.load_directory()?;
         Ok(())
     }
 }

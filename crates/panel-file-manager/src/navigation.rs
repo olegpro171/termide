@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::FileManager;
 
 /// Navigation state for directory traversal (cursor restoration, debouncing).
@@ -7,6 +9,9 @@ use super::FileManager;
 /// - `navigating_down`: Flag signaling entry into subdirectory (cursor resets to 0)
 /// - `last_reload_time`: Timestamp for debouncing rapid reload_directory() calls
 /// - `newly_created_item`: Name of newly created file/directory (for cursor positioning)
+/// - `newly_created_path`: Same idea but with the absolute path, so the
+///   cursor can land on the entry even when it's nested inside an
+///   expanded subdirectory (where many entries can share a name).
 #[derive(Clone, Default)]
 pub(crate) struct NavigationState {
     /// Name of directory we came from (for cursor restoration when going up)
@@ -17,6 +22,10 @@ pub(crate) struct NavigationState {
     pub(crate) last_reload_time: Option<std::time::Instant>,
     /// Name of newly created item to navigate to after reload
     pub(crate) newly_created_item: Option<String>,
+    /// Absolute path of newly created item — preferred over the name
+    /// when both are available, because it disambiguates entries that
+    /// live deeper in the tree.
+    pub(crate) newly_created_path: Option<PathBuf>,
 }
 
 impl NavigationState {
@@ -26,6 +35,7 @@ impl NavigationState {
             navigating_down: false,
             last_reload_time: None,
             newly_created_item: None,
+            newly_created_path: None,
         }
     }
 
@@ -66,8 +76,22 @@ impl NavigationState {
         self.newly_created_item = Some(name);
     }
 
+    pub(crate) fn set_newly_created_path(&mut self, path: PathBuf) {
+        // Keep the name in sync as a fallback for code paths that
+        // only know how to look the cursor up by name (e.g. some
+        // tests).
+        if let Some(name) = path.file_name() {
+            self.newly_created_item = Some(name.to_string_lossy().into_owned());
+        }
+        self.newly_created_path = Some(path);
+    }
+
     pub(crate) fn take_newly_created(&mut self) -> Option<String> {
         self.newly_created_item.take()
+    }
+
+    pub(crate) fn take_newly_created_path(&mut self) -> Option<PathBuf> {
+        self.newly_created_path.take()
     }
 }
 
