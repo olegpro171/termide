@@ -46,6 +46,18 @@ const DEFAULT_TIMEOUT_SECS: u64 = 60;
 /// Chunk size for chunked I/O operations (64KB) — matches old behavior.
 const CHUNK_SIZE: usize = 64 * 1024;
 
+/// Max time a single 64 KB read/write to the SFTP server may take
+/// before we treat the session as stalled and fail the transfer.
+/// Generous on purpose — at 64 KB even a 10 KB/s link finishes a
+/// chunk in seconds — but bounded so we never block the actor
+/// forever on a wedged server.
+const CHUNK_IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Bounded time we give `file.shutdown()` after a transfer to flush
+/// pending acks and close the remote handle. This is what keeps the
+/// `russh-sftp` request-id space clean across cancels.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
 // ============================================================================
 // Global tokio runtime
 // ============================================================================
@@ -301,11 +313,12 @@ async fn sftp_actor(
                 progress_tx,
                 reply,
             } => {
-                // Cancellation is driven inside the transfer (per-chunk
-                // tokio::select! against cancel_watch) so the function
-                // can close remote file handles explicitly before
-                // returning. Wrapping the whole future in an outer
-                // select! would skip that cleanup and wedge the session.
+                // Cancellation is checked between chunks inside the
+                // transfer so in-flight SFTP requests get their acks
+                // (otherwise dropping the future mid-await orphans the
+                // oneshot reply and pollutes russh-sftp's request-id
+                // space). The per-chunk timeout caps how long a stuck
+                // server can pin us.
                 let result = actor_download_with_progress(
                     &sftp,
                     &remote,
@@ -681,19 +694,6 @@ async fn wait_or_cancel(pause: &Arc<AtomicBool>, cancel: &Arc<AtomicBool>) -> Vf
     Ok(())
 }
 
-/// Future that resolves when `cancel` becomes `true`. Used with
-/// `tokio::select!` to interrupt in-flight server I/O the moment the
-/// user cancels — otherwise a slow / stuck `src.read().await` would
-/// pin the actor and block every subsequent VFS operation.
-async fn cancel_watch(cancel: Arc<AtomicBool>) {
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
 async fn actor_count_remote_files(
     sftp: &SftpSession,
     path: &Path,
@@ -882,24 +882,27 @@ async fn actor_dl_file_with_progress(
             cancelled = true;
             break;
         }
-        // tokio::select! against the cancel watcher around the SFTP read
-        // so the server doesn't keep us blocked on a slow chunk after
-        // the user has already cancelled.
-        let read_res = tokio::select! {
-            biased;
-            _ = cancel_watch(Arc::clone(cancel)) => None,
-            res = src.read(&mut buf) => Some(res),
-        };
-        let n = match read_res {
-            Some(Ok(n)) => n,
-            Some(Err(e)) => {
-                let _ = tokio::time::timeout(Duration::from_secs(3), src.shutdown()).await;
+        // IMPORTANT: do not race the chunk against a cancel watcher
+        // here. tokio::select! would drop a still-in-flight SFTP read
+        // future, but its oneshot ack receiver lives inside `src` and
+        // gets orphaned — the server's later SSH_FXP_STATUS lands on
+        // a dead Sender and `russh-sftp`'s shared request-id space
+        // gets confused on the next operation. 64 KB chunks finish in
+        // a fraction of a second on a healthy network; if the server
+        // genuinely hangs we cap the wait with a per-chunk timeout.
+        let n = match tokio::time::timeout(CHUNK_IO_TIMEOUT, src.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) => {
+                let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, src.shutdown()).await;
                 let _ = dst.flush().await;
                 return Err(map_sftp_err(e));
             }
-            None => {
-                cancelled = true;
-                break;
+            Err(_) => {
+                let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, src.shutdown()).await;
+                let _ = dst.flush().await;
+                return Err(VfsError::RemoteError {
+                    message: "SFTP read stalled".into(),
+                });
             }
         };
         if n == 0 {
@@ -918,11 +921,11 @@ async fn actor_dl_file_with_progress(
             current_file_total: file_total,
         });
     }
-    // Always close the remote read handle (bounded) so the SFTP actor
-    // can move on to the next command — leaving open handles strung
-    // along has caused subsequent ops to wedge until the server times
-    // out.
-    let _ = tokio::time::timeout(Duration::from_secs(3), src.shutdown()).await;
+    // Close the remote read handle. Bounded but with a longer budget
+    // than a single chunk — close also drains any pending acks from
+    // the file's internal VecDeque, which is what keeps the session
+    // healthy across cancels.
+    let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, src.shutdown()).await;
     let _ = dst.flush().await;
     if cancelled {
         return Err(VfsError::Cancelled);
@@ -1052,30 +1055,30 @@ async fn actor_ul_file_with_progress(
         let n = match src.read(&mut buf).await {
             Ok(n) => n,
             Err(e) => {
-                let _ = tokio::time::timeout(Duration::from_secs(3), dst.shutdown()).await;
+                let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, dst.shutdown()).await;
                 return Err(VfsError::Io(e));
             }
         };
         if n == 0 {
             break;
         }
-        // tokio::select! around the SFTP write so cancel during a slow
-        // network write doesn't pin the actor until the server times
-        // out the channel.
-        let write_res = tokio::select! {
-            biased;
-            _ = cancel_watch(Arc::clone(cancel)) => None,
-            res = dst.write_all(&buf[..n]) => Some(res),
-        };
-        match write_res {
-            Some(Ok(())) => {}
-            Some(Err(e)) => {
-                let _ = tokio::time::timeout(Duration::from_secs(3), dst.shutdown()).await;
+        // Same reasoning as the download path: never tokio::select! a
+        // mid-flight SFTP write against a cancel watcher — it leaves
+        // the server's reply landing on a dropped oneshot and pollutes
+        // the request-id space, wedging the next operation. Cap the
+        // chunk's network time with a timeout instead; cancel is
+        // checked between chunks by wait_or_cancel above.
+        match tokio::time::timeout(CHUNK_IO_TIMEOUT, dst.write_all(&buf[..n])).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, dst.shutdown()).await;
                 return Err(map_sftp_err(e));
             }
-            None => {
-                cancelled = true;
-                break;
+            Err(_) => {
+                let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, dst.shutdown()).await;
+                return Err(VfsError::RemoteError {
+                    message: "SFTP write stalled".into(),
+                });
             }
         }
         current_bytes += n as u64;
@@ -1090,10 +1093,10 @@ async fn actor_ul_file_with_progress(
             current_file_total: file_total,
         });
     }
-    // Always shutdown the remote write handle (bounded). For a
-    // cancelled upload this is what makes the server flush its state
-    // and stop blocking the next operation on this SFTP session.
-    let _ = tokio::time::timeout(Duration::from_secs(3), dst.shutdown()).await;
+    // Shutdown with a wider budget than a single chunk — close also
+    // drains pending acks from the file's VecDeque, which is what
+    // keeps the SFTP session healthy across cancels.
+    let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, dst.shutdown()).await;
     if cancelled {
         return Err(VfsError::Cancelled);
     }
