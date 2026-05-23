@@ -2,6 +2,10 @@
 
 The file manager panel provides an intuitive interface for navigating the file system and performing operations on files and directories.
 
+Remote filesystems (SFTP / FTP / FTPS) appear in the same panel as
+local paths — see [Remote Filesystems](vfs.md) for URL syntax and
+authentication setup.
+
 ## Navigation
 
 | Shortcut           | Action                                     |
