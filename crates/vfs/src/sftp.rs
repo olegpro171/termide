@@ -231,79 +231,103 @@ impl SftpHandle {
 
 /// Async actor task: owns the SftpSession and serves commands until the
 /// channel closes or `Shutdown` is received. `inner` lets the actor
-/// flip the public connection state back to Disconnected if it decides
-/// to exit on its own (e.g. after a cancelled transfer).
+/// publish state transitions (Connecting / Disconnected) so the rest
+/// of the VFS sees a coherent picture during in-band reconnects.
+///
+/// `host` / `port` plus the cached `ConnectOptions` / username stored
+/// on `inner` are everything we need to re-establish the session
+/// without UI involvement.
 async fn sftp_actor(
-    sftp: SftpSession,
+    initial: SftpSession,
     mut rx: async_mpsc::Receiver<SftpCommand>,
     inner: Arc<Mutex<SftpInner>>,
+    host: String,
+    port: u16,
 ) {
+    // Held as Option so a Reconnect attempt can take the old session
+    // out by value (close() consumes it) and put a fresh one back.
+    let mut sftp_opt: Option<SftpSession> = Some(initial);
+
+    // Convenience: pull the live session reference for a command. The
+    // actor only enters the next iteration if a previous iteration's
+    // reconnect succeeded, so unwrap is safe by construction.
+    macro_rules! sftp {
+        () => {
+            sftp_opt
+                .as_ref()
+                .expect("SFTP session must exist while actor runs")
+        };
+    }
+
     while let Some(cmd) = rx.recv().await {
         match cmd {
             SftpCommand::ListDir { path, reply } => {
-                let _ = reply.send(actor_list_dir(&sftp, &path).await);
+                let _ = reply.send(actor_list_dir(sftp!(), &path).await);
             }
             SftpCommand::Stat { path, reply } => {
-                let _ = reply.send(actor_stat(&sftp, &path).await);
+                let _ = reply.send(actor_stat(sftp!(), &path).await);
             }
             SftpCommand::Exists { path, reply } => {
-                let _ = reply.send(Ok(sftp.metadata(path_to_string(&path)).await.is_ok()));
+                let _ = reply.send(Ok(sftp!().metadata(path_to_string(&path)).await.is_ok()));
             }
             SftpCommand::Mkdir { path, reply } => {
-                let _ = reply.send(map_sftp_unit(sftp.create_dir(path_to_string(&path)).await));
+                let _ = reply.send(map_sftp_unit(
+                    sftp!().create_dir(path_to_string(&path)).await,
+                ));
             }
             SftpCommand::MkdirRecursive { path, reply } => {
-                let _ = reply.send(actor_mkdir_recursive(&sftp, &path).await);
+                let _ = reply.send(actor_mkdir_recursive(sftp!(), &path).await);
             }
             SftpCommand::Rename { from, to, reply } => {
                 let _ = reply.send(map_sftp_unit(
-                    sftp.rename(path_to_string(&from), path_to_string(&to))
+                    sftp!()
+                        .rename(path_to_string(&from), path_to_string(&to))
                         .await,
                 ));
             }
             SftpCommand::Read { path, reply } => {
-                let _ = reply.send(actor_read_file(&sftp, &path).await);
+                let _ = reply.send(actor_read_file(sftp!(), &path).await);
             }
             SftpCommand::Write { path, data, reply } => {
-                let _ = reply.send(actor_write_file(&sftp, &path, &data).await);
+                let _ = reply.send(actor_write_file(sftp!(), &path, &data).await);
             }
             SftpCommand::DeleteRecursive {
                 path,
                 depth_limit,
                 reply,
             } => {
-                let _ = reply.send(actor_delete_recursive(&sftp, &path, depth_limit).await);
+                let _ = reply.send(actor_delete_recursive(sftp!(), &path, depth_limit).await);
             }
             SftpCommand::CopyFile { from, to, reply } => {
-                let _ = reply.send(actor_copy_file(&sftp, &from, &to).await);
+                let _ = reply.send(actor_copy_file(sftp!(), &from, &to).await);
             }
             SftpCommand::DownloadFile {
                 remote,
                 local,
                 reply,
             } => {
-                let _ = reply.send(actor_download_file(&sftp, &remote, &local).await);
+                let _ = reply.send(actor_download_file(sftp!(), &remote, &local).await);
             }
             SftpCommand::UploadFile {
                 local,
                 remote,
                 reply,
             } => {
-                let _ = reply.send(actor_upload_file(&sftp, &local, &remote).await);
+                let _ = reply.send(actor_upload_file(sftp!(), &local, &remote).await);
             }
             SftpCommand::DownloadDir {
                 remote,
                 local,
                 reply,
             } => {
-                let _ = reply.send(actor_download_dir(&sftp, &remote, &local).await);
+                let _ = reply.send(actor_download_dir(sftp!(), &remote, &local).await);
             }
             SftpCommand::UploadDir {
                 local,
                 remote,
                 reply,
             } => {
-                let _ = reply.send(actor_upload_dir(&sftp, &local, &remote).await);
+                let _ = reply.send(actor_upload_dir(sftp!(), &local, &remote).await);
             }
             SftpCommand::DownloadWithProgress {
                 remote,
@@ -313,14 +337,8 @@ async fn sftp_actor(
                 progress_tx,
                 reply,
             } => {
-                // Cancellation is checked between chunks inside the
-                // transfer so in-flight SFTP requests get their acks
-                // (otherwise dropping the future mid-await orphans the
-                // oneshot reply and pollutes russh-sftp's request-id
-                // space). The per-chunk timeout caps how long a stuck
-                // server can pin us.
                 let result = actor_download_with_progress(
-                    &sftp,
+                    sftp!(),
                     &remote,
                     &local,
                     &pause,
@@ -328,16 +346,13 @@ async fn sftp_actor(
                     &progress_tx,
                 )
                 .await;
-                // Cancelled transfers can leave the SFTP session in a
-                // state where subsequent reads/writes never resolve
-                // (server holds the channel busy). Treat any cancel as
-                // a connection reset: signal the result and then break
-                // the actor loop so sftp.close() runs and the next
-                // operation surfaces NotConnected — the UI can then
-                // prompt the user to reconnect.
                 let was_cancelled = matches!(&result, Err(VfsError::Cancelled));
                 let _ = reply.send(result);
-                if was_cancelled {
+                if was_cancelled
+                    && actor_try_reconnect(&mut sftp_opt, &host, port, &inner)
+                        .await
+                        .is_err()
+                {
                     break;
                 }
             }
@@ -350,7 +365,7 @@ async fn sftp_actor(
                 reply,
             } => {
                 let result = actor_upload_with_progress(
-                    &sftp,
+                    sftp!(),
                     &local,
                     &remote,
                     &pause,
@@ -360,18 +375,86 @@ async fn sftp_actor(
                 .await;
                 let was_cancelled = matches!(&result, Err(VfsError::Cancelled));
                 let _ = reply.send(result);
-                if was_cancelled {
+                if was_cancelled
+                    && actor_try_reconnect(&mut sftp_opt, &host, port, &inner)
+                        .await
+                        .is_err()
+                {
                     break;
                 }
             }
             SftpCommand::Shutdown => break,
         }
     }
-    let _ = sftp.close().await;
+    if let Some(s) = sftp_opt.take() {
+        let _ = s.close().await;
+    }
     if let Ok(mut g) = inner.lock() {
         g.state = ConnectionState::Disconnected;
         g.handle = None;
         g.home_dir = None;
+    }
+}
+
+/// Try to re-establish the SFTP session in place using the cached
+/// credentials. On success swaps `sftp` for the fresh session and
+/// updates `SftpInner` so the public state stays coherent. On failure
+/// publishes Disconnected so the caller can break the actor loop.
+///
+/// Cancel runs through here whenever `actor_*_with_progress` returns
+/// `Err(VfsError::Cancelled)` — that's the point where the previous
+/// session is most likely to be unhealthy (russh-sftp may still be
+/// draining acks for the cancelled handle), and we'd rather burn one
+/// reconnect round-trip than risk wedging the next UI command.
+async fn actor_try_reconnect(
+    sftp_slot: &mut Option<SftpSession>,
+    host: &str,
+    port: u16,
+    inner: &Arc<Mutex<SftpInner>>,
+) -> Result<(), ()> {
+    // Snapshot cached creds and mark connection state as Connecting so
+    // anyone watching gets a coherent picture.
+    let (options, username, cancel_flag) = {
+        let mut g = match inner.lock() {
+            Ok(g) => g,
+            Err(_) => return Err(()),
+        };
+        let opts = match g.cached_options.clone() {
+            Some(o) => o,
+            None => return Err(()),
+        };
+        let user = match g.cached_username.clone() {
+            Some(u) => u,
+            None => return Err(()),
+        };
+        g.state = ConnectionState::Connecting;
+        g.connect_started = Some(Instant::now());
+        g.cancelled = Arc::new(AtomicBool::new(false));
+        (opts, user, Arc::clone(&g.cancelled))
+    };
+
+    // Best-effort close the old session before reopening so the server
+    // can release whatever it was still holding. `close()` consumes the
+    // session, hence the Option<SftpSession> dance.
+    if let Some(old_sftp) = sftp_slot.take() {
+        let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, old_sftp.close()).await;
+    }
+
+    match do_connect(host.to_string(), port, username, options, cancel_flag).await {
+        Ok((new_sftp, home_dir)) => {
+            *sftp_slot = Some(new_sftp);
+            if let Ok(mut g) = inner.lock() {
+                g.state = ConnectionState::Connected;
+                g.home_dir = home_dir;
+            }
+            Ok(())
+        }
+        Err(_) => {
+            if let Ok(mut g) = inner.lock() {
+                g.state = ConnectionState::Failed;
+            }
+            Err(())
+        }
     }
 }
 
@@ -1611,7 +1694,13 @@ impl VfsProvider for SftpProvider {
             match result {
                 Ok((sftp, home_dir)) => {
                     let (cmd_tx, cmd_rx) = async_mpsc::channel::<SftpCommand>(32);
-                    runtime().spawn(sftp_actor(sftp, cmd_rx, Arc::clone(&inner_arc)));
+                    runtime().spawn(sftp_actor(
+                        sftp,
+                        cmd_rx,
+                        Arc::clone(&inner_arc),
+                        host.clone(),
+                        port,
+                    ));
                     if let Ok(mut inner) = inner_arc.lock() {
                         inner.state = ConnectionState::Connected;
                         inner.handle = Some(SftpHandle { cmd_tx });
