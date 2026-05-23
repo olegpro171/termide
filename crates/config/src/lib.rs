@@ -50,7 +50,7 @@ pub mod defaults {
     pub const FM_DIR_SIZE_IN_WIDE_VIEW: bool = true;
     /// Per-directory time budget (ms) for the size walk rendered in FM wide view.
     /// `0` disables the feature the same way as `FM_DIR_SIZE_IN_WIDE_VIEW = false`.
-    pub const FM_DIR_SIZE_BUDGET_MS: u64 = 1000;
+    pub const FM_DIR_SIZE_BUDGET_MS: u64 = 100;
     pub const MIN_LOG_LEVEL: &str = "info";
     pub const RESOURCE_MONITOR_INTERVAL: u64 = 2000;
     pub const BELL_ON_OPERATION_COMPLETE: bool = true;
