@@ -10,6 +10,7 @@ description = "Syntax highlighting for termide using tree-sitter"
 [dependencies]
 ratatui.workspace = true
 anyhow.workspace = true
+log.workspace = true
 tree-sitter.workspace = true
 tree-sitter-highlight.workspace = true
 
@@ -24,7 +25,9 @@ tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
 tree-sitter-java = "0.23"
 tree-sitter-ruby = "0.23"
-tree-sitter-php = "0.24"
+# Pinned to 0.23: 0.24 ships grammars built with tree-sitter ABI 15, which the
+# workspace's tree-sitter 0.24 (max ABI 14) rejects, silently disabling PHP.
+tree-sitter-php = "0.23"
 tree-sitter-haskell = "0.23"
 tree-sitter-nix = "0.3"
 

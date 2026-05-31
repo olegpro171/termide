@@ -48,36 +48,6 @@ pub const HIGHLIGHT_NAMES: &[&str] = &[
     "embedded",
 ];
 
-/// Get style for highlight category (simplified version for basic use).
-pub fn style_for_highlight(index: usize, base_fg: Color) -> Style {
-    let name = HIGHLIGHT_NAMES.get(index).copied().unwrap_or("");
-
-    let color = match name {
-        "comment" => Color::DarkGray,
-        "keyword" => Color::Magenta,
-        "string" | "string.special" => Color::Green,
-        "number" | "constant" | "constant.builtin" => Color::Yellow,
-        "function" | "function.builtin" | "function.method" => Color::Blue,
-        "type" | "type.builtin" => Color::Cyan,
-        "variable.builtin" | "variable.parameter" => Color::Red,
-        "operator" => Color::LightMagenta,
-        "attribute" => Color::LightYellow,
-        "tag" => Color::LightBlue,
-        "escape" => Color::LightCyan,
-        "punctuation" | "punctuation.bracket" | "punctuation.delimiter" => base_fg,
-        _ => base_fg,
-    };
-
-    let mut style = Style::default().fg(color);
-
-    // Add modifiers for certain categories
-    if name == "keyword" {
-        style = style.add_modifier(Modifier::BOLD);
-    }
-
-    style
-}
-
 /// Detect language from file extension.
 pub fn detect_language(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?;
@@ -104,7 +74,6 @@ pub fn detect_language(path: &Path) -> Option<&'static str> {
         "yaml" | "yml" => Some("yaml"),
         "sh" | "bash" | "zsh" => Some("bash"),
         "md" | "markdown" => Some("markdown"),
-        "xml" | "xsl" | "xsd" | "svg" | "plist" => Some("xml"),
         _ => None,
     }
 }
@@ -209,6 +178,22 @@ impl TreeSitterHighlighter {
             &highlight_names,
         );
 
+        // JSX is parsed by the JavaScript grammar; its highlights are the base
+        // JavaScript query plus the JSX-specific additions.
+        let jsx_query = format!(
+            "{}\n{}",
+            tree_sitter_javascript::HIGHLIGHT_QUERY,
+            tree_sitter_javascript::JSX_HIGHLIGHT_QUERY
+        );
+        Self::load_language_config(
+            &mut configs,
+            "jsx",
+            tree_sitter_javascript::LANGUAGE.into(),
+            &jsx_query,
+            tree_sitter_javascript::INJECTIONS_QUERY,
+            &highlight_names,
+        );
+
         Self::load_language_config(
             &mut configs,
             "c",
@@ -245,10 +230,14 @@ impl TreeSitterHighlighter {
             &highlight_names,
         );
 
+        // PHP_ONLY (not LANGUAGE_PHP): the editor highlights line-by-line, so each
+        // line is parsed in isolation. LANGUAGE_PHP starts in HTML mode and only
+        // switches to PHP after a `<?php` opener, leaving every other line as plain
+        // HTML text — i.e. unhighlighted. PHP_ONLY parses lines as pure PHP.
         Self::load_language_config(
             &mut configs,
             "php",
-            tree_sitter_php::LANGUAGE_PHP.into(),
+            tree_sitter_php::LANGUAGE_PHP_ONLY.into(),
             tree_sitter_php::HIGHLIGHTS_QUERY,
             tree_sitter_php::INJECTIONS_QUERY,
             &highlight_names,
@@ -353,11 +342,16 @@ impl TreeSitterHighlighter {
         injections_query: &str,
         highlight_names: &[String],
     ) {
-        if let Ok(mut config) =
-            HighlightConfiguration::new(language, name, highlights_query, injections_query, "")
-        {
-            config.configure(highlight_names);
-            configs.insert(name, config);
+        match HighlightConfiguration::new(language, name, highlights_query, injections_query, "") {
+            Ok(mut config) => {
+                config.configure(highlight_names);
+                configs.insert(name, config);
+            }
+            Err(e) => {
+                // A failed grammar must not silently disable highlighting for the
+                // language; surface it so version/ABI regressions are diagnosable.
+                log::error!("Failed to load syntax highlighting for {name}: {e:?}");
+            }
         }
     }
 
@@ -737,5 +731,74 @@ impl LineHighlighter for HighlightCache {
 
     fn has_syntax(&self) -> bool {
         HighlightCache::has_syntax(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Highlight a single line and report how many distinct styled segments it
+    /// produces. A line that is recognized by the grammar yields more than one
+    /// segment; an unhighlighted (plain-text) line yields exactly one.
+    fn segment_count(language: &str, line: &str) -> usize {
+        let mut cache = HighlightCache::new(global_highlighter(), false, Color::White);
+        cache.set_syntax(language);
+        assert_eq!(
+            cache.current_syntax(),
+            Some(language),
+            "language {language} should have a loaded config"
+        );
+        cache.get_line_segments(0, line).len()
+    }
+
+    #[test]
+    fn every_supported_language_has_a_config() {
+        let h = global_highlighter();
+        for lang in SUPPORTED_LANGUAGES {
+            assert!(
+                h.get_config(lang).is_some(),
+                "SUPPORTED_LANGUAGES lists {lang} but no grammar config is loaded"
+            );
+        }
+    }
+
+    #[test]
+    fn detected_languages_are_all_loaded() {
+        // Every language detect_language can return must have a loaded config,
+        // otherwise the file silently falls back to plain text.
+        let h = global_highlighter();
+        let samples = [
+            "a.rs", "a.py", "a.go", "a.js", "a.ts", "a.tsx", "a.jsx", "a.c", "a.cpp", "a.java",
+            "a.rb", "a.php", "a.hs", "a.nix", "a.html", "a.css", "a.json", "a.toml", "a.yaml",
+            "a.sh", "a.md",
+        ];
+        for sample in samples {
+            let lang = detect_language(Path::new(sample))
+                .unwrap_or_else(|| panic!("{sample} should detect a language"));
+            assert!(
+                h.get_config(lang).is_some(),
+                "{sample} detected as {lang} but no config is loaded"
+            );
+        }
+    }
+
+    #[test]
+    fn php_line_is_highlighted() {
+        // Regression: PHP was disabled by an ABI-incompatible grammar, and even
+        // when loaded, LANGUAGE_PHP left non-`<?php` lines as plain HTML.
+        assert!(
+            segment_count("php", "$count = 1; // comment") > 1,
+            "PHP code line should produce multiple highlighted segments"
+        );
+    }
+
+    #[test]
+    fn jsx_line_is_highlighted() {
+        // Regression: jsx was advertised but never loaded.
+        assert!(
+            segment_count("jsx", "const x = <Foo bar={1} />;") > 1,
+            "JSX line should produce multiple highlighted segments"
+        );
     }
 }
