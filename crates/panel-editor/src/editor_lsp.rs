@@ -263,6 +263,40 @@ impl Editor {
         self.invalidate_cache_after_edit(min_line, true);
     }
 
+    /// Apply a server-driven `WorkspaceEdit`'s `TextEdit`s to this editor's
+    /// in-memory buffer — the document the language server positioned against.
+    ///
+    /// Used for command-based code actions (e.g. phpactor "Import class", whose
+    /// edit arrives via `workspace/applyEdit`). Editing the buffer rather than
+    /// the file on disk preserves unsaved changes and keeps the edit aligned
+    /// with the server's coordinates; the buffer is left modified and the caller
+    /// sends `didChange`. The caret follows its code past any lines inserted
+    /// above it.
+    pub fn apply_workspace_edits(&mut self, edits: &[lsp_types::TextEdit]) {
+        let Some(min_line) = edits.iter().map(|e| e.range.start.line as usize).min() else {
+            return;
+        };
+
+        let cursor_line = self.cursor.line;
+        let line_delta: i64 = edits
+            .iter()
+            .filter(|e| (e.range.start.line as usize) < cursor_line)
+            .map(|e| {
+                let inserted = e.new_text.matches('\n').count() as i64;
+                let removed = (e.range.end.line - e.range.start.line) as i64;
+                inserted - removed
+            })
+            .sum();
+
+        apply_text_edits(&mut self.buffer, edits);
+
+        if line_delta != 0 {
+            self.cursor.line = (self.cursor.line as i64 + line_delta).max(0) as usize;
+        }
+        self.clamp_cursor();
+        self.invalidate_cache_after_edit(min_line, true);
+    }
+
     /// Cancel completion popup.
     pub fn cancel_completion(&mut self) {
         self.lsp.completion_popup = None;
@@ -300,6 +334,9 @@ impl Editor {
     /// Request code actions for the current line (so a quick-fix like "Import
     /// class" sees the line's diagnostic as context).
     pub fn request_code_action(&mut self, lsp_manager: &LspManager) {
+        // Make sure the server sees the current buffer (including unsaved typing)
+        // before it computes actions, so the edit it returns aligns with ours.
+        self.flush_lsp_changes(lsp_manager);
         let Some(path) = self.buffer.file_path().map(|p| p.to_path_buf()) else {
             return;
         };
@@ -376,6 +413,9 @@ impl Editor {
         command: lsp_types::Command,
         lsp_manager: &LspManager,
     ) {
+        // Sync the buffer to the server first: it will compute the import edit
+        // against this content and push it back via workspace/applyEdit.
+        self.flush_lsp_changes(lsp_manager);
         if let Some(path) = self.buffer.file_path().map(|p| p.to_path_buf()) {
             self.lsp
                 .request_execute_command(&path, command, lsp_manager);
@@ -863,13 +903,20 @@ fn apply_text_edits(
         .max_by_key(|e| (e.range.start.line, e.range.start.character))
         .cloned();
 
-    let mut ordered: Vec<&lsp_types::TextEdit> = edits.iter().collect();
-    ordered.sort_by(|a, b| {
-        (b.range.start.line, b.range.start.character)
-            .cmp(&(a.range.start.line, a.range.start.character))
+    // Apply bottom-up. For edits sharing a start position (e.g. phpactor's
+    // "Import class" sends a blank line and a `use` line at the same point),
+    // the later array entry is applied first so they stack in array order — the
+    // descending original-index tie-break encodes that.
+    let mut ordered: Vec<(usize, &lsp_types::TextEdit)> = edits.iter().enumerate().collect();
+    ordered.sort_by(|(ia, a), (ib, b)| {
+        (b.range.start.line, b.range.start.character, *ib).cmp(&(
+            a.range.start.line,
+            a.range.start.character,
+            *ia,
+        ))
     });
 
-    for edit in ordered {
+    for (_, edit) in ordered {
         let start = Cursor::at(
             edit.range.start.line as usize,
             edit.range.start.character as usize,
@@ -960,6 +1007,30 @@ mod text_edit_tests {
         let mut buffer = TextBuffer::from_text("Ord");
         apply_text_edits(&mut buffer, &[edit(0, 0, 0, 3, "Order")]);
         assert_eq!(buffer.to_string(), "Order");
+    }
+
+    #[test]
+    fn phpactor_import_two_inserts_at_same_position() {
+        // phpactor "Import class" pushes two zero-width inserts at the SAME
+        // position (a blank line, then the `use` line). They must stack in array
+        // order and leave every other line — notably the usage — untouched.
+        let mut buffer = TextBuffer::from_text(
+            "<?php\n\nnamespace App;\n\nclass C\n{\n    public function i() { return Order::where(); }\n}\n",
+        );
+        let edits = vec![
+            edit(2, 14, 2, 14, "\n"),
+            edit(2, 14, 2, 14, "\nuse App\\Models\\Order\\Order;"),
+        ];
+        apply_text_edits(&mut buffer, &edits);
+        let text = buffer.to_string();
+        assert!(
+            text.contains("namespace App;\n\nuse App\\Models\\Order\\Order;\n\nclass C"),
+            "import misplaced:\n{text}"
+        );
+        assert!(
+            text.contains("return Order::where();"),
+            "usage lost:\n{text}"
+        );
     }
 
     #[test]

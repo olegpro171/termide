@@ -44,7 +44,9 @@ impl App {
         }
 
         let mut file_count = 0;
-        let mut modified_paths: Vec<PathBuf> = Vec::new();
+        // Files we edited in place (open in an editor) — these need a didChange
+        // so the server's model matches and it doesn't re-apply the edit.
+        let mut edited_in_editor: Vec<PathBuf> = Vec::new();
 
         for (uri_str, text_edits) in edits_by_file {
             if !uri_str.starts_with("file://") {
@@ -56,31 +58,44 @@ impl App {
             #[cfg(windows)]
             let path = PathBuf::from(path_str.trim_start_matches('/'));
 
-            let content = std::fs::read_to_string(&path)?;
-            let new_content = apply_text_edits(&content, &text_edits);
-            std::fs::write(&path, &new_content)?;
-            modified_paths.push(path);
+            // Prefer the open editor's buffer: the server positioned the edit
+            // against that document (it may hold unsaved changes), so writing
+            // disk and reloading would both misplace the edit and discard the
+            // user's unsaved work. Only files not open in any editor are touched
+            // on disk.
+            let mut applied_in_editor = false;
+            for panel in self.layout_manager.iter_all_panels_mut() {
+                if let Some(editor) = panel.as_editor_mut() {
+                    if editor.file_path().map(|p| p == path).unwrap_or(false) {
+                        editor.apply_workspace_edits(&text_edits);
+                        applied_in_editor = true;
+                        break;
+                    }
+                }
+            }
+
+            if applied_in_editor {
+                edited_in_editor.push(path);
+            } else {
+                let content = std::fs::read_to_string(&path)?;
+                let new_content = apply_text_edits(&content, &text_edits);
+                std::fs::write(&path, &new_content)?;
+            }
             file_count += 1;
         }
 
-        // Reload any open editors that were modified
-        for path in &modified_paths {
-            self.reload_editor_if_open(path);
-        }
-
-        // Keep the language server's in-memory document in sync with the edit it
-        // just asked us to apply. Without this, a server that performed the edit
-        // via executeCommand (e.g. phpactor "Import class") still believes the
-        // file is unchanged and re-applies the same edit next time — duplicating
-        // the `use` statement on a second invocation.
+        // Resync each edited open buffer with its language server. Without this,
+        // a server that performed the edit via executeCommand (e.g. phpactor
+        // "Import class") still believes the file is unchanged and re-applies
+        // the same edit next time — duplicating the `use` statement.
         if let Some(lsp_manager) = self.state.lsp_manager.as_ref() {
             for panel in self.layout_manager.iter_all_panels_mut() {
                 if let Some(editor) = panel.as_editor_mut() {
-                    let is_modified = editor
+                    let is_edited = editor
                         .file_path()
-                        .map(|p| modified_paths.iter().any(|m| m == p))
+                        .map(|p| edited_in_editor.iter().any(|m| m == p))
                         .unwrap_or(false);
-                    if is_modified {
+                    if is_edited {
                         editor.notify_lsp_change(lsp_manager);
                     }
                 }
@@ -88,20 +103,6 @@ impl App {
         }
 
         Ok(file_count)
-    }
-
-    /// Reload the editor that has `path` open, if any.
-    fn reload_editor_if_open(&mut self, path: &std::path::Path) {
-        for panel in self.layout_manager.iter_all_panels_mut() {
-            if let Some(editor) = panel.as_editor_mut() {
-                if editor.file_path().map(|p| p == path).unwrap_or(false) {
-                    if let Err(e) = editor.reload_from_disk() {
-                        log::warn!("Failed to reload editor after rename: {}", e);
-                    }
-                    break;
-                }
-            }
-        }
     }
 }
 
