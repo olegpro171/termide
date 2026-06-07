@@ -17,6 +17,7 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 | Built-in Terminal | ✓ | plugin | ✗ | ✗ |
 | File Manager | ✓ | plugin | ✗ | ✗ |
 | Git Integration | ✓ | plugin | ✗ | ✗ |
+| Database Viewer | ✓ | plugin | ✗ | ✗ |
 | LSP Support | ✓ | plugin | ✓ | plugin |
 | Syntax Highlighting | ✓ | ✓ | ✓ | ✓ |
 | Zero Config | ✓ | ✗ | ✓ | ✓ |
@@ -32,6 +33,7 @@ Unlike traditional terminal editors that need extensive plugin configuration, Te
 - **Smart File Manager** - Tree view with expandable directories, nested git status, batch operations, file/content search (glob/regex), in-tree incremental search
 - **Integrated Terminal** - Full PTY support, VT100 escape sequences, mouse tracking
 - **Git Integration** - Status panel, commit log with ASCII graph, staging/unstaging, branch switching, stash management, inline blame
+- **Database Viewer** - Read-only browser for SQLite / PostgreSQL / MySQL opened from a bookmark URL: table grid with a 2D cell cursor, server-side single-column sort and type-aware per-column filtering, sliding-window pagination, and a row-detail dialog that copies as TSV / JSON / INSERT
 - **Multi-panel Layout** - Vertically split panel groups with adjustable per-panel heights and a one-key fullscreen toggle (`Alt+F11`); smart auto-stacking when the terminal narrows; new panels open after the currently active one
 - **Image Viewer** - Native graphics in Kitty, WezTerm, iTerm2, Ghostty, foot terminals
 - **External Apps** - Open files with system default applications (Shift+Enter)
