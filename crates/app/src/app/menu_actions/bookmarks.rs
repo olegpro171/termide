@@ -631,6 +631,13 @@ impl App {
                     }
                 }
             }
+            BookmarkType::Database => {
+                // Open the read-only database viewer for this connection URL.
+                self.close_help_panels();
+                let panel = termide_panel_db::DbPanel::new(path, String::new());
+                self.add_panel(Box::new(panel));
+                self.auto_save_session();
+            }
             BookmarkType::Unknown => {
                 // Try to determine type and handle
                 let p = PathBuf::from(path);

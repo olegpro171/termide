@@ -56,6 +56,8 @@ pub enum BookmarkType {
     SmbPath,
     /// NFS remote path (nfs://server/export/path)
     NfsPath,
+    /// Database connection (postgres://, mysql://, sqlite://) - opens DB viewer
+    Database,
     /// Unknown type (fallback)
     Unknown,
 }
@@ -72,6 +74,7 @@ impl BookmarkType {
             BookmarkType::SshConnection => "💻",
             BookmarkType::SftpPath | BookmarkType::FtpPath => "📡",
             BookmarkType::SmbPath | BookmarkType::NfsPath => "🖧",
+            BookmarkType::Database => "🗄",
             BookmarkType::Unknown => "📌",
         }
     }
@@ -153,6 +156,16 @@ impl Bookmark {
         }
         if self.path.starts_with("nfs://") {
             return BookmarkType::NfsPath;
+        }
+
+        // Database connection URLs (opened by the DB viewer panel).
+        if self.path.starts_with("postgres://")
+            || self.path.starts_with("postgresql://")
+            || self.path.starts_with("mysql://")
+            || self.path.starts_with("mariadb://")
+            || self.path.starts_with("sqlite://")
+        {
+            return BookmarkType::Database;
         }
 
         let path = Path::new(&self.path);
