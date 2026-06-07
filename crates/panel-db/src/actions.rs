@@ -2,13 +2,15 @@
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use termide_core::{KeyChord, PanelEvent};
-use termide_db::{Condition, DbValue, FilterOp, SortDir, TypeCategory};
+use termide_db::{Condition, FilterOp, SortDir, TypeCategory};
 use termide_modal::{
     ActionButton, ActiveModal, DbFilterColumn, DbFilterModal, DbFilterResult, InfoActionModal,
 };
 use termide_state::PendingAction;
 
 use crate::dropdown::DropdownKey;
+use crate::filter::{label_for, op_from_label, operators_for, parse_value};
+use crate::format::{row_to_insert, row_to_json, tsv_escape};
 use crate::{DbPanel, Section};
 
 impl DbPanel {
@@ -590,11 +592,13 @@ impl DbPanel {
             let Some(op) = op_from_label(&c.op) else {
                 continue;
             };
-            let value = if matches!(op, FilterOp::IsNull | FilterOp::IsNotNull) {
-                None
-            } else {
-                Some(parse_value(self.category_of(&c.column), &c.value))
-            };
+            let needs_value = !matches!(op, FilterOp::IsNull | FilterOp::IsNotNull);
+            // An operator with no value isn't a usable condition — skip it
+            // rather than send an invalid (e.g. `integer = ''`) query.
+            if needs_value && c.value.trim().is_empty() {
+                continue;
+            }
+            let value = needs_value.then(|| parse_value(self.category_of(&c.column), &c.value));
             filters.push(Condition {
                 column: c.column,
                 op,
@@ -602,6 +606,7 @@ impl DbPanel {
             });
         }
         self.filters = filters;
+        self.query_error = None;
         self.offset = 0;
         self.cursor_row = 0;
         self.reload_all();
@@ -620,158 +625,4 @@ impl DbPanel {
     fn redraw(&self) -> Vec<PanelEvent> {
         vec![PanelEvent::NeedsRedraw, self.status_event()]
     }
-}
-
-/// Operator labels offered for a column category (type-aware).
-fn operators_for(cat: TypeCategory) -> &'static [&'static str] {
-    match cat {
-        TypeCategory::Number | TypeCategory::Date => {
-            &["=", "≠", ">", "≥", "<", "≤", "is null", "is not null"]
-        }
-        TypeCategory::Text | TypeCategory::Other => &[
-            "contains",
-            "starts with",
-            "ends with",
-            "=",
-            "≠",
-            "is null",
-            "is not null",
-        ],
-        TypeCategory::Bool => &["=", "≠", "is null", "is not null"],
-        TypeCategory::Bytes => &["is null", "is not null"],
-    }
-}
-
-fn op_from_label(label: &str) -> Option<FilterOp> {
-    Some(match label {
-        "contains" => FilterOp::Contains,
-        "starts with" => FilterOp::StartsWith,
-        "ends with" => FilterOp::EndsWith,
-        "=" => FilterOp::Eq,
-        "≠" => FilterOp::Ne,
-        ">" => FilterOp::Gt,
-        "≥" => FilterOp::Ge,
-        "<" => FilterOp::Lt,
-        "≤" => FilterOp::Le,
-        "is null" => FilterOp::IsNull,
-        "is not null" => FilterOp::IsNotNull,
-        _ => return None,
-    })
-}
-
-fn label_for(op: FilterOp) -> &'static str {
-    match op {
-        FilterOp::Contains => "contains",
-        FilterOp::StartsWith => "starts with",
-        FilterOp::EndsWith => "ends with",
-        FilterOp::Eq => "=",
-        FilterOp::Ne => "≠",
-        FilterOp::Gt => ">",
-        FilterOp::Ge => "≥",
-        FilterOp::Lt => "<",
-        FilterOp::Le => "≤",
-        FilterOp::IsNull => "is null",
-        FilterOp::IsNotNull => "is not null",
-    }
-}
-
-/// Coerce the user's text into a typed [`DbValue`] for binding, by category.
-fn parse_value(cat: TypeCategory, text: &str) -> DbValue {
-    match cat {
-        TypeCategory::Number => {
-            if let Ok(i) = text.parse::<i64>() {
-                DbValue::Int(i)
-            } else if let Ok(f) = text.parse::<f64>() {
-                DbValue::Float(f)
-            } else {
-                DbValue::Text(text.to_string())
-            }
-        }
-        TypeCategory::Bool => match text.to_ascii_lowercase().as_str() {
-            "true" | "1" | "t" | "yes" | "y" => DbValue::Bool(true),
-            "false" | "0" | "f" | "no" | "n" => DbValue::Bool(false),
-            _ => DbValue::Text(text.to_string()),
-        },
-        _ => DbValue::Text(text.to_string()),
-    }
-}
-
-/// JSON-encode a row as `{"col": value, …}`.
-fn row_to_json(names: &[String], row: &[DbValue]) -> String {
-    let mut out = String::from("{");
-    for (i, name) in names.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
-        }
-        out.push_str(&json_string(name));
-        out.push_str(": ");
-        out.push_str(&json_value(row.get(i)));
-    }
-    out.push('}');
-    out
-}
-
-fn json_value(v: Option<&DbValue>) -> String {
-    match v {
-        None | Some(DbValue::Null) => "null".to_string(),
-        Some(DbValue::Bool(b)) => b.to_string(),
-        Some(DbValue::Int(i)) => i.to_string(),
-        Some(DbValue::Float(f)) => f.to_string(),
-        Some(DbValue::Text(s)) => json_string(s),
-        Some(DbValue::Bytes(_)) => json_string(&v.unwrap().display()),
-    }
-}
-
-fn json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
-/// Build an `INSERT INTO "table" (...) VALUES (...);` statement. Identifiers
-/// are double-quoted (portable for SQLite/Postgres); adapt for MySQL backticks.
-fn row_to_insert(table: &str, names: &[String], row: &[DbValue]) -> String {
-    let cols = names
-        .iter()
-        .map(|n| format!("\"{}\"", n.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let vals = (0..names.len())
-        .map(|i| sql_literal(row.get(i)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "INSERT INTO \"{}\" ({}) VALUES ({});",
-        table.replace('"', "\"\""),
-        cols,
-        vals
-    )
-}
-
-fn sql_literal(v: Option<&DbValue>) -> String {
-    match v {
-        None | Some(DbValue::Null) => "NULL".to_string(),
-        Some(DbValue::Bool(b)) => if *b { "TRUE" } else { "FALSE" }.to_string(),
-        Some(DbValue::Int(i)) => i.to_string(),
-        Some(DbValue::Float(f)) => f.to_string(),
-        Some(DbValue::Text(s)) => format!("'{}'", s.replace('\'', "''")),
-        Some(DbValue::Bytes(_)) => format!("'{}'", v.unwrap().display().replace('\'', "''")),
-    }
-}
-
-/// Flatten tabs/newlines so a TSV row stays one line per record.
-fn tsv_escape(s: &str) -> String {
-    s.replace(['\t', '\n', '\r'], " ")
 }

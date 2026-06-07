@@ -212,11 +212,10 @@ impl Modal for DbFilterModal {
             let val_style = if val_focused { focused } else { base };
             let vw = inner.width.saturating_sub(val_x - inner.x) as usize;
             let value_w = vw.min(28);
-            let shown = if r.needs_value() {
-                r.value.as_str()
-            } else {
-                ""
-            };
+            // Only null-check operators have no value; "—" still shows what you
+            // type (typing auto-selects an operator).
+            let hide_value = matches!(r.op_label(), "is null" | "is not null");
+            let shown = if hide_value { "" } else { r.value.as_str() };
             let txt = if val_focused {
                 format!("{shown}_")
             } else {
@@ -336,7 +335,14 @@ impl Modal for DbFilterModal {
             KeyCode::Char(c) => {
                 if !self.buttons_focused() && self.field == Field::Value {
                     if let Some(r) = self.rows.get_mut(self.focus) {
-                        r.value.push(c);
+                        // Typing a value implies a condition: pick a default
+                        // operator if none is set yet.
+                        if r.op_sel == 0 && !r.operators.is_empty() {
+                            r.op_sel = 1;
+                        }
+                        if !matches!(r.op_label(), "is null" | "is not null") {
+                            r.value.push(c);
+                        }
                     }
                 }
             }

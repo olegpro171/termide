@@ -193,20 +193,12 @@ impl DbConnection {
 
     /// List databases/schemas the connection can switch to. Poll the receiver.
     pub fn list_databases(&self) -> mpsc::Receiver<Result<Vec<String>, DbError>> {
-        let (reply, rx) = mpsc::channel();
-        self.dispatch(Request::ListDatabases(reply.clone()), || {
-            let _ = reply.send(Err(DbError::Closed));
-        });
-        rx
+        self.request(Request::ListDatabases)
     }
 
     /// List tables. Poll the returned receiver for the result.
     pub fn list_tables(&self) -> mpsc::Receiver<Result<Vec<String>, DbError>> {
-        let (reply, rx) = mpsc::channel();
-        self.dispatch(Request::ListTables(reply.clone()), || {
-            let _ = reply.send(Err(DbError::Closed));
-        });
-        rx
+        self.request(Request::ListTables)
     }
 
     /// Describe a table's columns (name + inferred type category).
@@ -214,19 +206,8 @@ impl DbConnection {
         &self,
         table: impl Into<String>,
     ) -> mpsc::Receiver<Result<Vec<ColumnInfo>, DbError>> {
-        let (reply, rx) = mpsc::channel();
         let table = table.into();
-        let fail_reply = reply.clone();
-        self.dispatch(
-            Request::Columns {
-                table,
-                reply: reply.clone(),
-            },
-            move || {
-                let _ = fail_reply.send(Err(DbError::Closed));
-            },
-        );
-        rx
+        self.request(|reply| Request::Columns { table, reply })
     }
 
     /// Count rows in `table`, honouring `filters` (the filtered total shown in
@@ -236,43 +217,35 @@ impl DbConnection {
         table: impl Into<String>,
         filters: Vec<Condition>,
     ) -> mpsc::Receiver<Result<i64, DbError>> {
-        let (reply, rx) = mpsc::channel();
         let table = table.into();
-        let fail_reply = reply.clone();
-        self.dispatch(
-            Request::Count {
-                table,
-                filters,
-                reply: reply.clone(),
-            },
-            move || {
-                let _ = fail_reply.send(Err(DbError::Closed));
-            },
-        );
-        rx
+        self.request(|reply| Request::Count {
+            table,
+            filters,
+            reply,
+        })
     }
 
     /// Fetch one page of rows.
     pub fn page(&self, req: PageRequest) -> mpsc::Receiver<Result<Page, DbError>> {
-        let (reply, rx) = mpsc::channel();
-        let fail_reply = reply.clone();
-        self.dispatch(
-            Request::Page {
-                req,
-                reply: reply.clone(),
-            },
-            move || {
-                let _ = fail_reply.send(Err(DbError::Closed));
-            },
-        );
-        rx
+        self.request(|reply| Request::Page { req, reply })
     }
 
-    fn dispatch(&self, req: Request, on_closed: impl FnOnce()) {
+    /// Send a request built from a fresh reply channel and return its receiver.
+    /// If the worker is gone, the receiver yields `Closed` immediately.
+    fn request<T: Send + 'static>(
+        &self,
+        build: impl FnOnce(mpsc::Sender<Result<T, DbError>>) -> Request,
+    ) -> mpsc::Receiver<Result<T, DbError>> {
+        let (reply, rx) = mpsc::channel();
+        let fail = reply.clone();
+        let req = build(reply);
         match &self.tx {
             Some(tx) if tx.send(req).is_ok() => {}
-            _ => on_closed(),
+            _ => {
+                let _ = fail.send(Err(DbError::Closed));
+            }
         }
+        rx
     }
 }
 

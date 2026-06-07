@@ -12,6 +12,8 @@
 
 mod actions;
 mod dropdown;
+mod filter;
+mod format;
 mod render;
 
 use std::any::Any;
@@ -104,6 +106,9 @@ pub struct DbPanel {
     count_rx: Option<Receiver<Result<i64, DbError>>>,
     page_rx: Option<Receiver<Result<Page, DbError>>>,
     loading: bool,
+    /// Last query error (e.g. a bad filter). Non-fatal — shown in the status
+    /// bar while the previous page stays visible.
+    query_error: Option<String>,
 
     // --- input ---
     hotkeys: HotkeyTable,
@@ -182,6 +187,7 @@ impl DbPanel {
             count_rx: None,
             page_rx: None,
             loading: true,
+            query_error: None,
             hotkeys: HotkeyTable::default(),
             last_config_ptr: 0,
             cached_theme: ThemeColors::default(),
@@ -247,9 +253,14 @@ impl DbPanel {
                 } else {
                     t.db_filter_count_fmt(self.filters.len())
                 };
+                // A non-fatal query error (bad filter) is appended as a warning.
+                let err = match &self.query_error {
+                    Some(e) => format!(" · ⚠ {e}"),
+                    None => String::new(),
+                };
                 format!(
-                    "{} · {} · {}{}{}{}",
-                    self.label, table, range, total, sort, filter
+                    "{} · {} · {}{}{}{}{}",
+                    self.label, table, range, total, sort, filter, err
                 )
             }
         }
@@ -258,7 +269,7 @@ impl DbPanel {
     fn status_event(&self) -> PanelEvent {
         PanelEvent::SetStatusMessage {
             message: self.status_text(),
-            is_error: matches!(self.conn, ConnState::Failed(_)),
+            is_error: matches!(self.conn, ConnState::Failed(_)) || self.query_error.is_some(),
         }
     }
 
@@ -427,10 +438,12 @@ impl DbPanel {
                 match result {
                     Ok(dbs) => {
                         self.databases = dbs;
-                        // Surface the list right away so the user can pick.
-                        if self.selected_db.is_none() && !self.databases.is_empty() {
-                            self.section = Section::DbSelector;
-                            self.db_dd.open_at(0);
+                        // Auto-select the first database so data shows right
+                        // away; the user can switch via the selector chip.
+                        if self.selected_db.is_none() {
+                            if let Some(first) = self.databases.first().cloned() {
+                                self.select_database(first);
+                            }
                         }
                     }
                     Err(e) => self.conn = ConnState::Failed(e.to_string()),
@@ -494,15 +507,16 @@ impl DbPanel {
                 match result {
                     Ok(page) => {
                         self.page = page;
+                        self.query_error = None;
                         if self.pending_bottom {
                             self.cursor_row = self.page.rows.len().saturating_sub(1);
                             self.pending_bottom = false;
                         }
                         self.clamp_cursor();
                     }
-                    Err(e) => {
-                        self.conn = ConnState::Failed(e.to_string());
-                    }
+                    // A failed query (e.g. a bad filter) is non-fatal: keep the
+                    // connection and the previous page, surface the error.
+                    Err(e) => self.query_error = Some(e.to_string()),
                 }
                 changed = true;
             }
